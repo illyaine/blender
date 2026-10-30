@@ -89,6 +89,7 @@ const EnumPropertyItem rna_enum_nla_mode_extend_items[] = {
 #  include "BKE_nla.hh"
 
 #  include "DNA_object_types.h"
+#  include "DNA_speaker_types.h"
 
 #  include "ED_anim_api.hh"
 
@@ -123,15 +124,15 @@ static std::optional<std::string> rna_NlaStrip_path(const PointerRNA *ptr)
     NlaTrack *nlt;
     NlaStrip *nls;
 
-    for (nlt = static_cast<NlaTrack *>(adt->nla_tracks.first); nlt; nlt = nlt->next) {
-      for (nls = static_cast<NlaStrip *>(nlt->strips.first); nls; nls = nls->next) {
+    for (nlt = adt->nla_tracks.first(); nlt; nlt = nlt->next) {
+      for (nls = nlt->strips.first(); nls; nls = nls->next) {
         if (nls == strip) {
           /* XXX but if we animate like this, the control will never work... */
           char name_esc_nlt[sizeof(nlt->name) * 2];
           char name_esc_strip[sizeof(strip->name) * 2];
 
-          BLI_str_escape(name_esc_nlt, nlt->name, sizeof(name_esc_nlt));
-          BLI_str_escape(name_esc_strip, strip->name, sizeof(name_esc_strip));
+          BLI_str_escape(name_esc_nlt, nlt->name);
+          BLI_str_escape(name_esc_strip, strip->name);
           return fmt::format(
               "animation_data.nla_tracks[\"{}\"].strips[\"{}\"]", name_esc_nlt, name_esc_strip);
         }
@@ -445,7 +446,7 @@ static void rna_NlaStrip_action_set(PointerRNA *ptr, PointerRNA value, ReportLis
 {
   using namespace animrig;
   BLI_assert(ptr->owner_id);
-  BLI_assert(ptr->data);
+  BLI_assert(*ptr);
 
   ID &animated_id = *ptr->owner_id;
   NlaStrip &strip = *static_cast<NlaStrip *>(ptr->data);
@@ -606,18 +607,15 @@ static FCurve *rna_NlaStrip_fcurve_find(NlaStrip *strip,
   return BKE_fcurve_find(&strip->fcurves, data_path, index);
 }
 
-static NlaStrip *rna_NlaStrip_new(ID *id,
-                                  NlaTrack *track,
-                                  Main *bmain,
-                                  bContext *C,
-                                  ReportList *reports,
-                                  const char *name,
-                                  int start,
-                                  bAction *action)
+static NlaStrip *generic_NlaStrip_new_post(ID *id,
+                                           NlaTrack *track,
+                                           NlaStrip *strip,
+                                           Main *bmain,
+                                           bContext *C,
+                                           ReportList *reports,
+                                           const char *name,
+                                           const int start)
 {
-  BLI_assert(id);
-  NlaStrip *strip = BKE_nlastrip_new(action, *id);
-
   if (strip == nullptr) {
     BKE_report(reports, RPT_ERROR, "Unable to create new strip");
     return nullptr;
@@ -650,7 +648,7 @@ static NlaStrip *rna_NlaStrip_new(ID *id,
     while ((nlt = nlt->prev) != nullptr) {
       nlt_p = nlt;
     }
-    adt.nla_tracks.first = nlt_p;
+    adt.nla_tracks.first_ = nlt_p;
 
     /* do the same thing to find the last track */
     nlt_p = track;
@@ -658,7 +656,7 @@ static NlaStrip *rna_NlaStrip_new(ID *id,
     while ((nlt = nlt->next) != nullptr) {
       nlt_p = nlt;
     }
-    adt.nla_tracks.last = nlt_p;
+    adt.nla_tracks.last_ = nlt_p;
 
     STRNCPY(strip->name, name);
     BKE_nlastrip_validate_name(&adt, strip);
@@ -670,6 +668,42 @@ static NlaStrip *rna_NlaStrip_new(ID *id,
   DEG_id_tag_update_ex(bmain, id, ID_RECALC_ANIMATION | ID_RECALC_SYNC_TO_EVAL);
 
   return strip;
+}
+
+static NlaStrip *rna_NlaStrip_new_clip(ID *id,
+                                       NlaTrack *track,
+                                       Main *bmain,
+                                       bContext *C,
+                                       ReportList *reports,
+                                       const char *name,
+                                       const int start,
+                                       bAction *action)
+{
+  BLI_assert(id);
+  NlaStrip *strip = BKE_nlastrip_new(action, *id);
+  return generic_NlaStrip_new_post(id, track, strip, bmain, C, reports, name, start);
+}
+
+static NlaStrip *rna_NlaStrip_new_sound(ID *id,
+                                        NlaTrack *track,
+                                        Main *bmain,
+                                        bContext *C,
+                                        ReportList *reports,
+                                        const char *name,
+                                        const int start)
+{
+  BLI_assert(id);
+
+  Object *const ob = blender::id_cast<Object *>(id);
+  if (ob->type != OB_SPEAKER) {
+    BKE_report(reports, RPT_ERROR, "Only Speaker objects support Sound NLA strips");
+    return nullptr;
+  }
+
+  NlaStrip *strip = BKE_nla_add_soundstrip(
+      bmain, CTX_data_scene(C), blender::id_cast<Speaker *>(ob->data));
+
+  return generic_NlaStrip_new_post(id, track, strip, bmain, C, reports, name, start);
 }
 
 static void rna_NlaStrip_remove(
@@ -701,7 +735,7 @@ static std::optional<std::string> rna_NlaTrack_path(const PointerRNA *ptr)
   }
 
   char name_esc[sizeof(nlt->name) * 2];
-  BLI_str_escape(name_esc, nlt->name, sizeof(name_esc));
+  BLI_str_escape(name_esc, nlt->name);
   return fmt::format("animation_data.nla_tracks[\"{}\"]", name_esc);
 }
 
@@ -1159,7 +1193,7 @@ static void rna_api_nlatrack_strips(BlenderRNA *brna, PropertyRNA *cprop)
   RNA_def_struct_sdna(srna, "NlaTrack");
   RNA_def_struct_ui_text(srna, "NLA Strips", "Collection of NLA Strips");
 
-  func = RNA_def_function(srna, "new", "rna_NlaStrip_new");
+  func = RNA_def_function(srna, "new", "rna_NlaStrip_new_clip");
   RNA_def_function_flag(func,
                         FUNC_USE_SELF_ID | FUNC_USE_MAIN | FUNC_USE_CONTEXT | FUNC_USE_REPORTS);
   RNA_def_function_ui_description(func, "Add a new Action-Clip strip to the track");
@@ -1177,8 +1211,30 @@ static void rna_api_nlatrack_strips(BlenderRNA *brna, PropertyRNA *cprop)
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
   parm = RNA_def_pointer(func, "action", "Action", "", "Action to assign to this strip");
   RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
-  /* return type */
+  // Return type.
   parm = RNA_def_pointer(func, "strip", "NlaStrip", "", "New NLA Strip");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, ParameterFlag(0));
+  RNA_def_function_return(func, parm);
+
+  func = RNA_def_function(srna, "new_sound", "rna_NlaStrip_new_sound");
+  RNA_def_function_flag(func,
+                        FUNC_USE_SELF_ID | FUNC_USE_MAIN | FUNC_USE_CONTEXT | FUNC_USE_REPORTS);
+  RNA_def_function_ui_description(func, "Add a new Sound strip to the track");
+  parm = RNA_def_string(func, "name", "NlaStrip", 0, "", "Name for the NLA Strip");
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+  parm = RNA_def_int(func,
+                     "start",
+                     0,
+                     INT_MIN,
+                     INT_MAX,
+                     "Start Frame",
+                     "Start frame for this strip",
+                     INT_MIN,
+                     INT_MAX);
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+  // Return type.
+  parm = RNA_def_pointer(func, "strip", "NlaStrip", "", "New NLA Strip");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, ParameterFlag(0));
   RNA_def_function_return(func, parm);
 
   func = RNA_def_function(srna, "remove", "rna_NlaStrip_remove");

@@ -132,7 +132,7 @@ filter_supported_objects(Depsgraph *depsgraph, const OBJExportParams &export_par
         break;
       case OB_CURVES_LEGACY: {
         Curve *curve = id_cast<Curve *>(object->data);
-        Nurb *nurb{static_cast<Nurb *>(curve->nurb.first)};
+        Nurb *nurb{curve->nurb.first()};
         if (!nurb) {
           /* An empty curve. Not yet supported to export these as meshes. */
           if (export_params.export_curves_as_nurbs) {
@@ -314,7 +314,7 @@ static void write_materials(MTLWriter *mtl_writer, const OBJExportParams &export
   mtl_writer->write_header(export_params.blen_filepath);
   char dest_dir[FILE_MAX];
   if (export_params.file_base_for_tests[0] == '\0') {
-    BLI_path_split_dir_part(export_params.filepath, dest_dir, sizeof(dest_dir));
+    BLI_path_split_dir_part(export_params.filepath, dest_dir);
   }
   else {
     STRNCPY(dest_dir, export_params.file_base_for_tests);
@@ -367,8 +367,8 @@ bool append_frame_to_filename(const char *filepath,
 {
   BLI_strncpy(r_filepath_with_frames, filepath, FILE_MAX);
   BLI_path_extension_strip(r_filepath_with_frames);
-  BLI_path_frame(r_filepath_with_frames, FILE_MAX, frame, 4);
-  return BLI_path_extension_replace(r_filepath_with_frames, FILE_MAX, ".obj");
+  BLI_path_frame(MutableCStr(r_filepath_with_frames, FILE_MAX), frame, 4);
+  return BLI_path_extension_replace(MutableCStr(r_filepath_with_frames, FILE_MAX), ".obj");
 }
 
 void exporter_main(bContext *C, const OBJExportParams &export_params)

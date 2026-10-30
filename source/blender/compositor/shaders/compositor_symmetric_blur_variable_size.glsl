@@ -7,8 +7,8 @@
 COMPUTE_SHADER_CREATE_INFO(compositor_symmetric_blur_variable_size)
 
 #include "gpu_shader_compositor_texture_utilities.glsl"
-#include "gpu_shader_math_vector_lib.glsl"
-#include "gpu_shader_math_vector_safe_lib.glsl"
+#include "gpu_shader_math_vector.bsl.hh"
+#include "gpu_shader_math_vector_safe.bsl.hh"
 
 void main()
 {
@@ -17,7 +17,8 @@ void main()
   float4 accumulated_color = float4(0.0f);
   float4 accumulated_weight = float4(0.0f);
 
-  const float2 size = max(float2(0.0), texture_load(size_tx, texel).xy);
+  const float2 loaded_size = texture_load(size_tx, texel).xy;
+  const float2 size = max(float2(0.0), loaded_size * pixel_size);
   int2 radius = int2(ceil(size));
   float2 coordinates_scale = float2(1.0f) / (size + float2(1));
 

@@ -115,7 +115,7 @@ static bool get_invoke_region(bContext *C,
 
   ARegion *region = BKE_area_find_region_type(area, RGN_TYPE_WINDOW);
   *r_region = region;
-  *r_view3d = static_cast<View3D *>(area->spacedata.first);
+  *r_view3d = area->spacedata.first_as<View3D>();
   *r_rv3d = static_cast<RegionView3D *>(region->regiondata);
   return true;
 }
@@ -134,7 +134,7 @@ static bool grease_pencil_import_svg_check(bContext * /*C*/, wmOperator *op)
   RNA_string_get(op->ptr, "filepath", filepath);
 
   if (!BLI_path_extension_check(filepath, ".svg")) {
-    BLI_path_extension_ensure(filepath, FILE_MAX, ".svg");
+    BLI_path_extension_ensure(filepath, ".svg");
     RNA_string_set(op->ptr, "filepath", filepath);
     return true;
   }
@@ -284,7 +284,7 @@ static bool grease_pencil_export_svg_check(bContext * /*C*/, wmOperator *op)
   RNA_string_get(op->ptr, "filepath", filepath);
 
   if (!BLI_path_extension_check(filepath, ".svg")) {
-    BLI_path_extension_ensure(filepath, FILE_MAX, ".svg");
+    BLI_path_extension_ensure(filepath, ".svg");
     RNA_string_set(op->ptr, "filepath", filepath);
     return true;
   }
@@ -484,7 +484,7 @@ static bool grease_pencil_export_pdf_check(bContext * /*C*/, wmOperator *op)
   RNA_string_get(op->ptr, "filepath", filepath);
 
   if (!BLI_path_extension_check(filepath, ".pdf")) {
-    BLI_path_extension_ensure(filepath, FILE_MAX, ".pdf");
+    BLI_path_extension_ensure(filepath, ".pdf");
     RNA_string_set(op->ptr, "filepath", filepath);
     return true;
   }

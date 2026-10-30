@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup edsculpt
+ */
+
 #include "editors/sculpt_paint/mesh/brushes/brushes.hh"
 
 #include "DNA_brush_types.h"
@@ -51,31 +55,25 @@ static void calc_faces(const Depsgraph &depsgraph,
                        const Span<float3> vert_normals,
                        const bke::pbvh::MeshNode &node,
                        Object &object,
-                       LocalData &tls,
                        const PositionDeformData &position_data)
 {
   SculptSession &ss = *object.runtime->sculpt_session;
 
   const Span<int> verts = node.verts();
-  const MutableSpan positions = gather_data_mesh(position_data.eval, verts, tls.positions);
+  Array<float3, bke::pbvh::MESH_LEAF_LIMIT> positions(verts.size());
+  gather_data_mesh<float3>(position_data.eval, verts, positions);
 
-  calc_factors_common_mesh(depsgraph,
-                           brush,
-                           object,
-                           attribute_data,
-                           positions,
-                           vert_normals,
-                           node,
-                           tls.factors,
-                           tls.distances);
+  Array<float, bke::pbvh::MESH_LEAF_LIMIT> factors(verts.size());
+  Array<float, bke::pbvh::MESH_LEAF_LIMIT> distances(verts.size());
+  calc_factors_common_mesh(
+      depsgraph, brush, object, attribute_data, positions, vert_normals, node, factors, distances);
 
-  scale_factors(tls.factors, strength);
+  scale_factors(factors, strength);
 
-  tls.translations.resize(verts.size());
-  const MutableSpan<float3> translations = tls.translations;
+  Array<float3, bke::pbvh::MESH_LEAF_LIMIT> translations(verts.size());
   calc_translations_to_plane(positions, plane_tilt, translations);
 
-  scale_translations(translations, tls.factors);
+  scale_translations(translations, factors);
 
   clip_and_lock_translations(sd, ss, positions, translations);
   position_data.deform(translations, verts);
@@ -96,6 +94,8 @@ static void calc_grids(const Depsgraph &depsgraph,
   const Span<int> grids = node.grids();
   const MutableSpan positions = gather_grids_positions(subdiv_ccg, grids, tls.positions);
 
+  tls.factors.resize(positions.size());
+  tls.distances.resize(positions.size());
   calc_factors_common_grids(depsgraph, brush, object, positions, node, tls.factors, tls.distances);
 
   scale_factors(tls.factors, strength);
@@ -124,6 +124,8 @@ static void calc_bmesh(const Depsgraph &depsgraph,
   const Set<BMVert *, 0> &verts = BKE_pbvh_bmesh_node_unique_verts(&node);
   const MutableSpan positions = gather_bmesh_positions(verts, tls.positions);
 
+  tls.factors.resize(positions.size());
+  tls.distances.resize(positions.size());
   calc_factors_common_bmesh(depsgraph, brush, object, positions, node, tls.factors, tls.distances);
 
   scale_factors(tls.factors, strength);
@@ -151,14 +153,11 @@ void do_clay_thumb_brush(const Depsgraph &depsgraph,
   const Brush &brush = *BKE_paint_brush_for_read(&sd.paint);
   const float3 &location = ss.cache->location_symm;
 
-  float3 area_position;
-  float3 sculpt_plane_normal;
-  calc_brush_plane(depsgraph, brush, object, node_mask, area_position, sculpt_plane_normal);
-
-  float3 area_normal = area_position;
+  const float3 plane_normal = ss.cache->sculpt_normal_symm;
+  float3 normal = plane_normal;
   /* Ignore brush settings and recalculate the area normal. */
   if (brush.sculpt_plane != SCULPT_DISP_DIR_AREA || (brush.flag & BRUSH_ORIGINAL_NORMAL)) {
-    area_normal = calc_area_normal(depsgraph, brush, object, node_mask).value_or(float3(0));
+    normal = sample_plane_normal(depsgraph, brush, object, node_mask).value_or(float3(0));
   }
 
   /* Delay the first daub because grab delta is not setup. */
@@ -181,9 +180,9 @@ void do_clay_thumb_brush(const Depsgraph &depsgraph,
 
   /* Initialize brush local-space matrix. */
   float4x4 mat = float4x4::identity();
-  mat.x_axis() = math::cross(area_normal, ss.cache->grab_delta_symm);
-  mat.y_axis() = math::cross(area_normal, mat.x_axis());
-  mat.z_axis() = area_normal;
+  mat.x_axis() = math::cross(normal, ss.cache->grab_delta_symm);
+  mat.y_axis() = math::cross(normal, mat.x_axis());
+  mat.z_axis() = normal;
   mat.location() = ss.cache->location_symm;
   /* NOTE: #math::normalize behaves differently for some reason. */
   normalize_m4(mat.ptr());
@@ -193,10 +192,8 @@ void do_clay_thumb_brush(const Depsgraph &depsgraph,
   const float4x4 tmat = mat * scale;
 
   float3 normal_tilt;
-  rotate_v3_v3v3fl(normal_tilt,
-                   area_position,
-                   tmat.x_axis(),
-                   DEG2RADF(-ss.cache->clay_thumb_brush.front_angle));
+  rotate_v3_v3v3fl(
+      normal_tilt, plane_normal, tmat.x_axis(), DEG2RADF(-ss.cache->clay_thumb_brush.front_angle));
 
   /* Tilted plane (front part of the brush). */
   float4 plane_tilt;
@@ -213,7 +210,6 @@ void do_clay_thumb_brush(const Depsgraph &depsgraph,
       const Span<float3> vert_normals = bke::pbvh::vert_normals_eval(depsgraph, object);
       node_mask.foreach_index(
           [&](const int i) {
-            LocalData &tls = all_tls.local();
             calc_faces(depsgraph,
                        sd,
                        brush,
@@ -223,7 +219,6 @@ void do_clay_thumb_brush(const Depsgraph &depsgraph,
                        vert_normals,
                        nodes[i],
                        object,
-                       tls,
                        position_data);
             bke::pbvh::update_node_bounds_mesh(position_data.eval, nodes[i]);
           },

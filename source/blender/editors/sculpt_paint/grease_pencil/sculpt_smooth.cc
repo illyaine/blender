@@ -104,7 +104,7 @@ void SmoothOperation::on_stroke_extended(const bContext &C, const InputSample &e
   const Brush &brush = [&]() -> const Brush & {
     if (temp_smooth_) {
       const Brush *brush = BKE_paint_brush_from_essentials(
-          CTX_data_main(&C), PaintMode::SculptGPencil, "Smooth");
+          CTX_data_main(&C), bke::paint::AssetCategory::GPencilSculpt, "Smooth");
       BLI_assert(brush != nullptr);
       return *brush;
     }
@@ -176,22 +176,19 @@ void SmoothOperation::on_stroke_extended(const bContext &C, const InputSample &e
           changed = true;
         }
         if (sculpt_mode_flag & GP_SCULPT_FLAGMODE_APPLY_UV) {
-          if (bke::SpanAttributeWriter<float> rotations =
-                  attributes.lookup_or_add_for_write_span<float>("rotation",
-                                                                 bke::AttrDomain::Point))
-          {
-            geometry::smooth_curve_attribute(curves.curves_range(),
-                                             points_by_curve,
-                                             selection_varray,
-                                             cyclic,
-                                             iterations,
-                                             influences,
-                                             true,
-                                             false,
-                                             rotations.span);
-            rotations.finish();
-            changed = true;
-          }
+          bke::SpanAttributeWriter<float> rotations = attributes.ensure_for_write_span<float>(
+              "rotation", bke::AttrDomain::Point);
+          geometry::smooth_curve_attribute(curves.curves_range(),
+                                           points_by_curve,
+                                           selection_varray,
+                                           cyclic,
+                                           iterations,
+                                           influences,
+                                           true,
+                                           false,
+                                           rotations.span);
+          rotations.finish();
+          changed = true;
         }
         return changed;
       });

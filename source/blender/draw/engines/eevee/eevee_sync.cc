@@ -43,7 +43,7 @@ ObjectHandle SyncModule::sync_object(const ObjectRef &ob_ref,
  * \{ */
 
 static inline void geometry_call(PassMain::Sub *sub_pass,
-                                 gpu::Batch *geom,
+                                 draw::Batch *geom,
                                  ResourceHandleRange resource_handle)
 {
   if (sub_pass != nullptr) {
@@ -55,7 +55,7 @@ static inline void geometry_volume_call(PassMain::Sub *pass,
                                         GPUMaterial *gpumat,
                                         Scene *scene,
                                         Object *ob,
-                                        gpu::Batch *geom,
+                                        draw::Batch *geom,
                                         ResourceHandle res_handle)
 {
   BLI_assert(ob->type != OB_VOLUME);
@@ -153,6 +153,7 @@ void SyncModule::sync_common(const ObjectHandle &ob_handle,
   bool is_alpha_blend = false;
   bool has_transparent_shadows = false;
   bool has_time_dependent_shadows = false;
+  bool has_shadow_offset = false;
   float inflate_bounds = 0.0f;
 
   for (const Material *material : materials) {
@@ -167,13 +168,16 @@ void SyncModule::sync_common(const ObjectHandle &ob_handle,
     const bool has_displacement = GPU_material_has_displacement_output(gpu_material) &&
                                   (bl_material->displacement_method != MA_DISPLACEMENT_BUMP);
     const bool has_time_node = GPU_material_flag_get(gpu_material, GPU_MATFLAG_SCENE_TIME);
+    const bool mat_has_shadow_offset = GPU_material_flag_get(gpu_material,
+                                                             GPU_MATFLAG_SHADOW_OFFSET);
 
     is_alpha_blend |= material->is_alpha_blend_transparent;
     has_transparent_shadows |= material->has_transparent_shadows;
-    has_time_dependent_shadows |= has_time_node &&
-                                  (material->has_transparent_shadows || has_displacement);
+    has_shadow_offset |= mat_has_shadow_offset;
+    has_time_dependent_shadows |= has_time_node && (material->has_transparent_shadows ||
+                                                    has_displacement || mat_has_shadow_offset);
 
-    if (has_displacement) {
+    if (has_displacement || mat_has_shadow_offset) {
       inflate_bounds = math::max(inflate_bounds, bl_material->inflate_bounds);
     }
 
@@ -182,8 +186,11 @@ void SyncModule::sync_common(const ObjectHandle &ob_handle,
 
   inst_.cryptomatte.sync_object(ob_handle);
 
-  inst_.shadows.sync_object(
-      ob_handle, is_alpha_blend, has_transparent_shadows, has_time_dependent_shadows);
+  inst_.shadows.sync_object(ob_handle,
+                            is_alpha_blend,
+                            has_transparent_shadows,
+                            has_time_dependent_shadows,
+                            has_shadow_offset);
 
   if (has_volume) {
     inst_.volume.object_sync(ob_handle);
@@ -221,7 +228,7 @@ void SyncModule::sync_mesh(const ObjectRef &ob_ref)
 
   MaterialArray &material_array = inst_.materials.material_array_get(ob_handle, has_motion);
 
-  Span<gpu::Batch *> mat_geom = DRW_cache_object_surface_material_get(
+  Span<draw::Batch *> mat_geom = DRW_cache_object_surface_material_get(
       ob_handle.object, material_array.gpu_materials);
   if (mat_geom.is_empty()) {
     return;
@@ -230,10 +237,10 @@ void SyncModule::sync_mesh(const ObjectRef &ob_ref)
   Vector<Material *, 8> synced_materials;
 
   for (auto i : material_array.gpu_materials.index_range()) {
-    gpu::Batch *geom = mat_geom[i];
-    if (geom == nullptr) {
+    if (mat_geom[i] == nullptr) {
       continue;
     }
+    draw::Batch *geom = mat_geom[i];
 
     Material &material = material_array.materials[i];
     synced_materials.append(&material);
@@ -289,10 +296,11 @@ bool SyncModule::sync_sculpt(const ObjectRef &ob_ref)
   for (SculptBatch &batch :
        sculpt_batches_per_material_get(ob_ref.object, material_array.gpu_materials))
   {
-    gpu::Batch *geom = batch.batch;
-    if (geom == nullptr) {
+    if (batch.batch == nullptr) {
       continue;
     }
+
+    draw::Batch *geom = batch.batch;
 
     Material &material = material_array.materials[batch.material_slot];
     synced_materials.append(&material);
@@ -341,17 +349,20 @@ void SyncModule::sync_pointcloud(const ObjectRef &ob_ref)
   ObjectHandle ob_handle = sync_object(ob_ref, inst_.manager->unique_handle(ob_ref));
 
   bool has_motion = inst_.velocity.step_object_sync(ob_handle);
+  eMaterialGeometry mat_geom_type = to_pointcloud_material_geometry(ob_ref.object);
 
   Material material = inst_.materials.material_get(
-      ob_handle, has_motion, material_slot - 1, MAT_GEOM_POINTCLOUD);
+      ob_handle, has_motion, material_slot - 1, mat_geom_type);
 
   auto drawcall_add = [&](const MaterialPass &matpass, bool dual_sided = false) {
     if (matpass.sub_pass == nullptr) {
       return;
     }
+
     PassMain::Sub &object_pass = matpass.sub_pass->sub("Point Cloud Sub Pass");
-    gpu::Batch *geometry = pointcloud_sub_pass_setup(
-        object_pass, ob_handle.object, matpass.gpumat);
+    draw::Batch *geometry = pointcloud_sub_pass_setup(
+        object_pass, ob_ref, ob_handle.res_handle, matpass.gpumat);
+
     if (dual_sided) {
       /* WORKAROUND: Hack to generate backfaces. Should also be baked into the Index Buf too at
        * some point in the future. */
@@ -421,7 +432,7 @@ void SyncModule::sync_volume(const ObjectRef &ob_ref)
   }
 
   /* Use bounding box tag empty spaces. */
-  gpu::Batch *geom = inst_.volume.unit_cube_batch_get();
+  draw::Batch *geom = inst_.volume.unit_cube_batch_get();
   bool is_rendered = false;
 
   sync_volume_passes(ob_handle, material, [&](const MaterialPass &pass, int /*instance*/) {
@@ -483,14 +494,14 @@ void SyncModule::sync_curves(const ObjectRef &ob_ref, HairParticleInfo const *ha
     }
     if (hair_particle != nullptr) {
       PassMain::Sub &sub_pass = matpass.sub_pass->sub("Hair SubPass");
-      gpu::Batch *geometry = hair_sub_pass_setup(
+      draw::Batch *geometry = hair_sub_pass_setup(
           sub_pass, inst_.scene, ob_ref, &hair_particle->psys, &hair_particle->md, matpass.gpumat);
       sub_pass.draw(geometry, ob_handle.res_handle);
     }
     else {
       PassMain::Sub &sub_pass = matpass.sub_pass->sub("Curves SubPass");
       const char *error = nullptr;
-      gpu::Batch *geometry = curves_sub_pass_setup(
+      draw::Batch *geometry = curves_sub_pass_setup(
           sub_pass, inst_.scene, ob_ref.object, error, matpass.gpumat);
       if (error) {
         inst_.info_append(error);

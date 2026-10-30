@@ -53,7 +53,7 @@ static Main *pyrna_bmain_FromPyObject(PyObject *obj)
   }
   BPy_StructRNA *pyrna = reinterpret_cast<BPy_StructRNA *>(obj);
   PYRNA_STRUCT_CHECK_OBJ(pyrna);
-  if (!(pyrna->ptr && pyrna->ptr->type == RNA_BlendData && pyrna->ptr->data)) {
+  if (!(pyrna->ptr && pyrna->ptr->type == RNA_BlendData && *pyrna->ptr)) {
     PyErr_Format(PyExc_TypeError,
                  "Expected a StructRNA of type BlendData, not %.200s",
                  Py_TYPE(pyrna)->tp_name);
@@ -83,7 +83,7 @@ static int id_code_as_index(const short idcode)
 
 static bool id_check_type(const ID *id, const BLI_bitmap *types_bitmap)
 {
-  return BLI_BITMAP_TEST_BOOL(types_bitmap, id_code_as_index(GS(id->name)));
+  return BLI_BITMAP_TEST_BOOL(types_bitmap, id_code_as_index(id->id_type()));
 }
 
 static int foreach_libblock_id_user_map_callback(LibraryIDLinkCallbackData *cb_data)
@@ -332,8 +332,7 @@ struct IDFilePathMapData {
 };
 
 static bool foreach_id_file_path_map_callback(BPathForeachPathData *bpath_data,
-                                              char * /*path_dst*/,
-                                              size_t /*path_dst_maxncpy*/,
+                                              MutableCStr /*path_dst*/,
                                               const char *path_src)
 {
   IDFilePathMapData &data = *static_cast<IDFilePathMapData *>(bpath_data->user_data);
@@ -738,8 +737,7 @@ static PyObject *bpy_file_path_meta_CreatePyObject(const BPathForeachPathData *b
 }
 
 static bool foreach_id_file_path_foreach_callback(BPathForeachPathData *bpath_data,
-                                                  char *path_dst,
-                                                  const size_t path_dst_maxncpy,
+                                                  MutableCStr path_dst,
                                                   const char *path_src)
 {
   IDFilePathForeachData &data = *static_cast<IDFilePathForeachData *>(bpath_data->user_data);
@@ -752,7 +750,7 @@ static bool foreach_id_file_path_foreach_callback(BPathForeachPathData *bpath_da
   if (!path_src || !path_src[0]) {
     return false;
   }
-  BLI_assert(path_dst);
+  BLI_assert(path_dst.data());
 
   /* Construct the callback function parameters. */
   PointerRNA id_ptr = RNA_id_pointer_create(bpath_data->owner_id);
@@ -821,8 +819,7 @@ static bool foreach_id_file_path_foreach_callback(BPathForeachPathData *bpath_da
   /* Copy the returned string back into the path.
    * BLI_strncpy wants buffer size, but PyC_UnicodeAsBytesAndSize reports string
    * length, hence the +1. */
-  BLI_strncpy(
-      path_dst, replacement_path, std::min(path_dst_maxncpy, size_t(replacement_path_length + 1)));
+  STRNCPY(path_dst.take_front(replacement_path_length + 1), replacement_path);
 
   Py_XDECREF(value_coerce);
   Py_DECREF(result);
@@ -849,7 +846,7 @@ PyDoc_STRVAR(
     ":class:`bpy.types.BlendDataPathMeta`], str|None]\n"
     "   :param subset: When given, only these data-blocks and their used file paths "
     "will be visited.\n"
-    "   :type subset: set[str] | None\n"
+    "   :type subset: set[:class:`bpy.types.ID`] | None\n"
     "   :param visit_types: When given, only visit data-blocks of these types. Ignored if "
     "``subset`` is also given.\n"
     "   :type visit_types: set[str] | None\n"

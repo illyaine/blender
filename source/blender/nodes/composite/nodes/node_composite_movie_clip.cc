@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include "BLI_array.hh"
+#include "BLI_math_matrix.hh"
 #include "BLI_math_vector_types.hh"
 
 #include "IMB_imbuf.hh"
@@ -36,18 +37,21 @@ static void node_declare(NodeDeclarationBuilder &b)
   b.add_output<decl::Float>("Angle"_ustr);
 }
 
-static void node_init(const bContext *C, PointerRNA *ptr)
+static void node_init(bNodeTree * /*node_tree*/, bNode *node)
 {
-  bNode *node = static_cast<bNode *>(ptr->data);
-  node->flag |= NODE_PREVIEW;
-
-  Scene *scene = CTX_data_scene(C);
   MovieClipUser *user = MEM_new<MovieClipUser>(__func__);
-
-  node->id = id_cast<ID *>(scene->clip);
-  id_us_plus(node->id);
   node->storage = user;
   user->framenr = 1;
+
+  node->flag |= NODE_PREVIEW;
+}
+
+static void node_init_api(const bContext *C, PointerRNA *node_ptr)
+{
+  bNode *node = node_ptr->data_as<bNode>();
+  Scene *scene = CTX_data_scene(C);
+  node->id = id_cast<ID *>(scene->clip);
+  id_us_plus(node->id);
 }
 
 static void node_draw_buttons(ui::Layout &layout, bContext *C, PointerRNA *ptr)
@@ -72,14 +76,15 @@ class MovieClipOperation : public NodeOperation {
   {
     ImBuf *movie_clip_buffer = get_movie_clip_buffer();
 
-    compute_image(movie_clip_buffer);
-    compute_alpha(movie_clip_buffer);
+    const float2 pixel_size = this->context().get_compositing_domain().pixel_size;
+    compute_image(movie_clip_buffer, pixel_size);
+    compute_alpha(movie_clip_buffer, pixel_size);
     compute_stabilization_data(movie_clip_buffer);
 
     IMB_freeImBuf(movie_clip_buffer);
   }
 
-  void compute_image(ImBuf *movie_clip_buffer)
+  void compute_image(ImBuf *movie_clip_buffer, const float2 &pixel_size)
   {
     Result &result = this->get_result("Image");
     if (!result.should_compute()) {
@@ -104,9 +109,13 @@ class MovieClipOperation : public NodeOperation {
         result.store_pixel(texel, Color(src + pixel_index));
       });
     }
+
+    result.domain().transformation = math::from_scale<float3x3>(pixel_size) *
+                                     result.domain().transformation;
+    result.domain().pixel_size = pixel_size;
   }
 
-  void compute_alpha(ImBuf *movie_clip_buffer)
+  void compute_alpha(ImBuf *movie_clip_buffer, const float2 &pixel_size)
   {
     Result &result = get_result("Alpha");
     if (!result.should_compute()) {
@@ -139,6 +148,10 @@ class MovieClipOperation : public NodeOperation {
         result.store_pixel(texel, src[pixel_index + 3]);
       });
     }
+
+    result.domain().transformation = math::from_scale<float3x3>(pixel_size) *
+                                     result.domain().transformation;
+    result.domain().pixel_size = pixel_size;
   }
 
   void compute_stabilization_data(ImBuf *movie_clip_buffer)
@@ -263,7 +276,8 @@ static void node_register()
   ntype.draw_buttons = node_draw_buttons;
   ntype.draw_buttons_ex = node_draw_buttons_extended;
   ntype.get_compositor_operation = get_compositor_operation;
-  ntype.initfunc_api = node_init;
+  ntype.initfunc = node_init;
+  ntype.initfunc_api = node_init_api;
   ntype.flag |= NODE_PREVIEW;
   bke::node_type_storage(
       ntype, "MovieClipUser", node_free_standard_storage, node_copy_standard_storage);

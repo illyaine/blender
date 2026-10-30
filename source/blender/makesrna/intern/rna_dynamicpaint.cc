@@ -58,7 +58,7 @@ static std::optional<std::string> rna_DynamicPaintCanvasSettings_path(const Poin
   const ModifierData *md = reinterpret_cast<ModifierData *>(settings->pmd);
   char name_esc[sizeof(md->name) * 2];
 
-  BLI_str_escape(name_esc, md->name, sizeof(name_esc));
+  BLI_str_escape(name_esc, md->name);
   return fmt::format("modifiers[\"{}\"].canvas_settings", name_esc);
 }
 
@@ -68,7 +68,7 @@ static std::optional<std::string> rna_DynamicPaintBrushSettings_path(const Point
   const ModifierData *md = reinterpret_cast<ModifierData *>(settings->pmd);
   char name_esc[sizeof(md->name) * 2];
 
-  BLI_str_escape(name_esc, md->name, sizeof(name_esc));
+  BLI_str_escape(name_esc, md->name);
   return fmt::format("modifiers[\"{}\"].brush_settings", name_esc);
 }
 
@@ -79,8 +79,8 @@ static std::optional<std::string> rna_DynamicPaintSurface_path(const PointerRNA 
   char name_esc[sizeof(md->name) * 2];
   char name_esc_surface[sizeof(surface->name) * 2];
 
-  BLI_str_escape(name_esc, md->name, sizeof(name_esc));
-  BLI_str_escape(name_esc_surface, surface->name, sizeof(name_esc_surface));
+  BLI_str_escape(name_esc, md->name);
+  BLI_str_escape(name_esc_surface, surface->name);
   return fmt::format(
       "modifiers[\"{}\"].canvas_settings.canvas_surfaces[\"{}\"]", name_esc, name_esc_surface);
 }
@@ -160,7 +160,7 @@ static void rna_DynamicPaintSurface_reset_dependency(Main *bmain, Scene *scene, 
 static PointerRNA rna_PaintSurface_active_get(PointerRNA *ptr)
 {
   DynamicPaintCanvasSettings *canvas = static_cast<DynamicPaintCanvasSettings *>(ptr->data);
-  DynamicPaintSurface *surface = static_cast<DynamicPaintSurface *>(canvas->surfaces.first);
+  DynamicPaintSurface *surface = canvas->surfaces.first();
   int id = 0;
 
   for (; surface; surface = surface->next) {
@@ -169,7 +169,7 @@ static PointerRNA rna_PaintSurface_active_get(PointerRNA *ptr)
     }
     id++;
   }
-  return PointerRNA_NULL;
+  return {};
 }
 
 static void rna_DynamicPaint_surfaces_begin(CollectionPropertyIterator *iter, PointerRNA *ptr)
@@ -207,13 +207,12 @@ static void rna_Surface_active_point_range(
 static void rna_DynamicPaint_uvlayer_set(PointerRNA *ptr, const char *value)
 {
   DynamicPaintCanvasSettings *canvas = (static_cast<DynamicPaintSurface *>(ptr->data))->canvas;
-  DynamicPaintSurface *surface = static_cast<DynamicPaintSurface *>(canvas->surfaces.first);
+  DynamicPaintSurface *surface = canvas->surfaces.first();
   int id = 0;
 
   for (; surface; surface = surface->next) {
     if (id == canvas->active_sur) {
-      rna_object_uvlayer_name_set(
-          ptr, value, surface->uvlayer_name, sizeof(surface->uvlayer_name));
+      rna_object_uvlayer_name_set(ptr, value, surface->uvlayer_name);
       return;
     }
     id++;

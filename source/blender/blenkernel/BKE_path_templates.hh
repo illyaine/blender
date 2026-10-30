@@ -69,6 +69,7 @@
 
 #include "BLI_map.hh"
 #include "BLI_path_utils.hh"
+#include "BLI_span.hh"
 #include "BLI_string.hh"
 #include "BLI_string_ref.hh"
 #include "BLI_string_utils.hh"
@@ -78,6 +79,9 @@
 
 #include "DNA_node_types.h"
 #include "DNA_scene_types.h"
+
+/* Collapsed abbreviation to use when shortening path template strings for viewing purposes. */
+#define BKE_TEMPLATE_EXPRESSION_ABBREVIATION "{" BLI_STR_UTF8_HORIZONTAL_ELLIPSIS "}"
 
 namespace blender {
 
@@ -245,6 +249,25 @@ class VariableMap {
   bool add_path_up_to_file(StringRef var_name, StringRefNull full_path, StringRef fallback);
 };
 
+/**
+ * Info about a template variable expression in a string.
+ */
+struct ExpressionInfo {
+  /**
+   * Byte index range (exclusive on the right) of the expression in the string.
+   *
+   * This includes the starting/ending braces of the expression.
+   */
+  IndexRange byte_range;
+
+  /**
+   * Reference to the variable name as written in the template string.
+   *
+   * Note that this points into the template string, and does not own the value.
+   */
+  StringRef variable_name;
+};
+
 enum class ErrorType {
   UNESCAPED_CURLY_BRACE,
   VARIABLE_SYNTAX,
@@ -258,6 +281,16 @@ struct Error {
 };
 
 bool operator==(const Error &left, const Error &right);
+
+/**
+ * Fetches the next template variable expression in the string at or after the
+ * given starting byte offset.
+ *
+ * Returns std::nullopt when it encounters invalid expression syntax or when
+ * there are no variable expressions in the string after the given offset.
+ */
+std::optional<ExpressionInfo> next_template_variable_expression(StringRef text,
+                                                                size_t starting_offset);
 
 }  // namespace bke::path_templates
 
@@ -275,6 +308,14 @@ bool operator==(const Error &left, const Error &right);
  */
 std::optional<bke::path_templates::VariableMap> BKE_build_template_variables_for_prop(
     const bContext *C, PointerRNA *ptr, PropertyRNA *prop);
+
+/**
+ * Add project related variables.
+ *
+ * \see #BKE_path_apply_template()
+ */
+void BKE_add_template_variables_for_project(bke::path_templates::VariableMap &variables,
+                                            const bke::BlenderProject &project);
 
 /**
  * Add the general variables that should be available for all path templates.
@@ -329,6 +370,11 @@ void BKE_add_template_variables_for_render_path(bke::path_templates::VariableMap
  */
 void BKE_add_template_variables_for_node(bke::path_templates::VariableMap &variables,
                                          const bNode &owning_node);
+
+/**
+ * Escape `{` and `}`, so #BKE_path_apply_template() does not treat them as templates.
+ */
+std::string BKE_path_template_escape(StringRef text);
 
 /**
  * Check if a path contains any templating syntax at all.
@@ -388,15 +434,14 @@ Vector<bke::path_templates::Error> BKE_path_validate_template(
  * - Format specifications that don't apply to the type of variable they're
  *   paired with.
  *
- * \param path_maxncpy: The maximum length that template expansion is allowed
- * to make the template-expanded path (in bytes), including the null terminator.
- * In general, this should be the size of the underlying allocation of `path`.
+ * \param path: Template expansion is limited to `path.size()` bytes,
+ * including the null terminator.
  *
  * \return On success, an empty vector. If there are errors, a vector of all
  * errors encountered.
  */
 Vector<bke::path_templates::Error> BKE_path_apply_template(
-    char *path, int path_maxncpy, const bke::path_templates::VariableMap &template_variables);
+    MutableCStr path, const bke::path_templates::VariableMap &template_variables);
 
 /**
  * Like `BKE_path_apply_template()`, but takes a heap-allocated path and may

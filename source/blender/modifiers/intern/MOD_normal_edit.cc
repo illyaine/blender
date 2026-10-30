@@ -481,14 +481,12 @@ static Mesh *normalEditModifier_do(NormalEditModifierData *enmd,
   Array<float3> corner_normals;
 
   bke::MutableAttributeAccessor attributes = result->attributes_for_write();
-  bke::SpanAttributeWriter<bool> sharp_edges = attributes.lookup_or_add_for_write_span<bool>(
+  bke::SpanAttributeWriter<bool> sharp_edges = attributes.ensure_for_write_span<bool>(
       "sharp_edge", bke::AttrDomain::Edge);
 
-  bke::SpanAttributeWriter custom_nors_dst = attributes.lookup_or_add_for_write_span<short2>(
+  bke::SpanAttributeWriter custom_nors_dst = attributes.ensure_for_write_span<short2>(
       "custom_normal", bke::AttrDomain::Corner);
-  if (!custom_nors_dst) {
-    return result;
-  }
+
   if (use_current_clnors) {
     corner_normals.reinitialize(corner_verts.size());
     const VArraySpan sharp_faces = *attributes.lookup<bool>("sharp_face", bke::AttrDomain::Face);
@@ -653,8 +651,7 @@ static void offset_panel_draw(const bContext * /*C*/, Panel *panel)
 
   int mode = RNA_enum_get(ptr, "mode");
   PointerRNA target_ptr = RNA_pointer_get(ptr, "target");
-  bool needs_object_offset = (mode == MOD_NORMALEDIT_MODE_RADIAL &&
-                              RNA_pointer_is_null(&target_ptr)) ||
+  bool needs_object_offset = (mode == MOD_NORMALEDIT_MODE_RADIAL && !target_ptr) ||
                              (mode == MOD_NORMALEDIT_MODE_DIRECTIONAL &&
                               RNA_boolean_get(ptr, "use_direction_parallel"));
 

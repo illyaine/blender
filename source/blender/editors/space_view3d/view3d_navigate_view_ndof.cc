@@ -13,6 +13,7 @@
 #include "BLI_rect.hh"
 
 #include "BKE_layer.hh"
+#include "BKE_view3d_runtime.hh"
 
 #include "DEG_depsgraph_query.hh"
 
@@ -69,7 +70,8 @@ static bool ndof_has_translate_pan(const wmNDOFMotionData &ndof,
 
 static bool ndof_has_rotate(const wmNDOFMotionData &ndof, const RegionView3D *rv3d)
 {
-  return !is_zero_v3(ndof.rvec) && ((RV3D_LOCK_FLAGS(rv3d) & RV3D_LOCK_ROTATION) == 0);
+  return !is_zero_v3(ndof.rvec) &&
+         ((bke::region_view3d_lock_flags_get(rv3d) & RV3D_LOCK_ROTATION) == 0);
 }
 
 /**
@@ -158,7 +160,7 @@ static void view3d_ndof_pan_zoom(const wmNDOFMotionData &ndof,
 
     /* all callers must check */
     if (has_translate) {
-      BLI_assert(ED_view3d_offset_lock_check((View3D *)area->spacedata.first, rv3d) == false);
+      BLI_assert(ED_view3d_offset_lock_check((View3D *)area->spacedata.first_, rv3d) == false);
     }
   }
 
@@ -216,65 +218,10 @@ static void view3d_ndof_pan_zoom(const wmNDOFMotionData &ndof,
       sub_v3_v3(rv3d->ndof_ofs, pan_vec);
     }
 
-    if (RV3D_LOCK_FLAGS(rv3d) & RV3D_BOXVIEW) {
+    if (bke::region_view3d_lock_flags_get(rv3d) & RV3D_BOXVIEW) {
       view3d_boxview_sync(area, region);
     }
   }
-}
-
-/**
- * View leveling algorithm.
- *
- * \return a correction angle to be applied around `view_z_axis`
- * or zero if the angle cannot be calculated.
- */
-static float view3d_ndof_calc_leveling_angle(const float view_x_axis[3],
-                                             const float view_y_axis[3],
-                                             const float view_z_axis[3])
-{
-  /* Check if view is already leveled. */
-  const bool view_not_leveled = std::abs(view_x_axis[2]) > 0.001f;
-
-  if (view_not_leveled) {
-
-    float isect_vec[3] = {0, 0, 0};
-    float isect_pt[3] = {0, 0, 0};
-
-    /* Find the intersection vector between horizon (XY) plane and view plane. */
-    const float horizon_normal[3] = {0, 0, 1};
-    if (!isect_plane_plane_v3(horizon_normal, view_z_axis, isect_pt, isect_vec)) {
-      /* NOTE: this is highly unlikely to fail as `view_not_leveled`
-       * is expected to rule out the possibility of intersection failing. */
-
-      /* While it's not a hard-error if this fails, assert as it's likely a logical error. */
-      BLI_assert(false);
-
-      return 0.0f;
-    }
-    normalize_v3(isect_vec);
-
-    /* Invert the direction of intersection vector if view is oriented upside down. */
-    if (view_y_axis[2] < 0.0f) {
-      negate_v3(isect_vec);
-    }
-
-    /* Determine the angle to rotate the view over it's Y axis,
-     * to make view's X axis lie on the horizon plane (world XY). */
-    const float cosine = dot_v3v3(view_x_axis, isect_vec);
-    float x_to_horizon_angle = acos(cosine);
-
-    /* Invert the leveling rotation direction if the view is tilted clockwise
-     * with Y axis pointing up, or it is tilted counter-clockwise
-     * with Y axis pointing down. */
-    if (((view_x_axis[2] < 0.0f) && (view_y_axis[2] > 0.0f)) ||
-        ((view_x_axis[2] > 0.0f) && (view_y_axis[2] < 0.0f)))
-    {
-      x_to_horizon_angle *= -1.0f;
-    }
-
-    return x_to_horizon_angle;
-  }
-  return 0.0f;
 }
 
 static void view3d_ndof_orbit(const wmNDOFMotionData &ndof,
@@ -284,12 +231,12 @@ static void view3d_ndof_orbit(const wmNDOFMotionData &ndof,
                               const bool apply_dyn_ofs)
 {
 
-  View3D *v3d = static_cast<View3D *>(area->spacedata.first);
+  View3D *v3d = area->spacedata.first_as<View3D>();
   RegionView3D *rv3d = static_cast<RegionView3D *>(region->regiondata);
 
   float view_inv[4];
 
-  BLI_assert((RV3D_LOCK_FLAGS(rv3d) & RV3D_LOCK_ROTATION) == 0);
+  BLI_assert((bke::region_view3d_lock_flags_get(rv3d) & RV3D_LOCK_ROTATION) == 0);
 
   ED_view3d_persp_ensure(vod->depsgraph, v3d, region);
 
@@ -302,7 +249,6 @@ static void view3d_ndof_orbit(const wmNDOFMotionData &ndof,
     float angle, quat[4];
     float xvec[3] = {1, 0, 0};
     float yvec[3] = {0, 1, 0};
-    float zvec[3] = {0, 0, 1};
 
     /* only use XY, ignore Z */
     float3 rot = WM_event_ndof_rotation_get_for_navigation(ndof);
@@ -311,16 +257,11 @@ static void view3d_ndof_orbit(const wmNDOFMotionData &ndof,
     mul_qt_v3(view_inv, xvec);
     /* Determine the direction of the Y vector (to check if the view is upside down). */
     mul_qt_v3(view_inv, yvec);
-    /* Determine the direction of the Z vector (for view leveling rotation around this vector). */
-    mul_qt_v3(view_inv, zvec);
 
-    /* Level the view to a "horizon plane". */
-    const float leveling_angle = view3d_ndof_calc_leveling_angle(xvec, yvec, zvec);
-    if (leveling_angle != 0.0f) {
-      float leveling_quat[4];
-      axis_angle_to_quat(leveling_quat, zvec, leveling_angle);
-      mul_qt_qtqt(rv3d->viewquat, rv3d->viewquat, leveling_quat);
-    }
+    /* Level the view to a "horizon plane", an upside down view is kept that way,
+     * the turn-table direction is flipped below. */
+    const float horizon_plane[3] = {0.0f, 0.0f, 1.0f};
+    view3d_horizon_correct_quat(rv3d->viewquat, horizon_plane, true, nullptr, 0.0f, 1.0f);
 
     /* Perform the up/down rotation */
     angle = ndof.time_delta * rot[0];
@@ -336,10 +277,10 @@ static void view3d_ndof_orbit(const wmNDOFMotionData &ndof,
     }
 
     /* Update the onscreen axis-angle indicator. */
-    rv3d->ndof_rot_angle = angle;
-    rv3d->ndof_rot_axis[0] = 0;
-    rv3d->ndof_rot_axis[1] = 0;
-    rv3d->ndof_rot_axis[2] = 1;
+    rv3d->runtime->ndof_rot_angle = angle;
+    rv3d->runtime->ndof_rot_axis[0] = 0;
+    rv3d->runtime->ndof_rot_axis[1] = 0;
+    rv3d->runtime->ndof_rot_axis[2] = 1;
 
     axis_angle_to_quat_single(quat, 'Z', angle);
     mul_qt_qtqt(rv3d->viewquat, rv3d->viewquat, quat);
@@ -354,8 +295,8 @@ static void view3d_ndof_orbit(const wmNDOFMotionData &ndof,
     mul_qt_v3(view_inv, axis);
 
     /* Update the onscreen axis-angle indicator. */
-    rv3d->ndof_rot_angle = angle;
-    copy_v3_v3(rv3d->ndof_rot_axis, axis);
+    rv3d->runtime->ndof_rot_angle = angle;
+    copy_v3_v3(rv3d->runtime->ndof_rot_axis, axis);
 
     axis_angle_to_quat(quat, axis, angle);
 
@@ -394,7 +335,7 @@ void view3d_ndof_fly(const wmNDOFMotionData &ndof,
   float view_inv[4];
   invert_qt_qt_normalized(view_inv, rv3d->viewquat);
 
-  rv3d->ndof_rot_angle = 0.0f; /* Disable onscreen rotation indicator. */
+  rv3d->runtime->ndof_rot_angle = 0.0f; /* Disable onscreen rotation indicator. */
 
   if (has_translate) {
     /* ignore real 'dist' since fly has its own speed settings,
@@ -467,24 +408,8 @@ void view3d_ndof_fly(const wmNDOFMotionData &ndof,
       if (NDOF_IS_HORIZON_LOCKED(&U)) {
         /* force an upright viewpoint
          * TODO: make this less... sudden */
-        float view_horizon[3] = {1.0f, 0.0f, 0.0f};    /* view +x */
-        float view_direction[3] = {0.0f, 0.0f, -1.0f}; /* view -z (into screen) */
-
-        /* find new inverse since viewquat has changed */
-        invert_qt_qt_normalized(view_inv, rv3d->viewquat);
-        /* could apply reverse rotation to existing view_inv to save a few cycles */
-
-        /* transform view vectors to world coordinates */
-        mul_qt_v3(view_inv, view_horizon);
-        mul_qt_v3(view_inv, view_direction);
-
-        /* find difference between view & world horizons
-         * true horizon lives in world xy plane, so look only at difference in z */
-        angle = -asinf(view_horizon[2]);
-
-        /* rotate view so view horizon = world horizon */
-        axis_angle_to_quat(rotation, view_direction, angle);
-        mul_qt_qtqt(rv3d->viewquat, rv3d->viewquat, rotation);
+        const float horizon_plane[3] = {0.0f, 0.0f, 1.0f};
+        view3d_horizon_correct_quat_ease_out(rv3d->viewquat, horizon_plane, false, 1.0f);
       }
 
       rv3d->view = RV3D_VIEW_USER;
@@ -687,7 +612,7 @@ static std::optional<float3> ndof_orbit_center_calc_from_zbuf(Depsgraph *depsgra
     return zbuf_center;
   }
 
-  View3D *v3d = static_cast<View3D *>(area->spacedata.first);
+  View3D *v3d = area->spacedata.first_as<View3D>();
   if (view3d_calc_point_in_selected_bounds(depsgraph, view_layer, v3d, zbuf_center, scale_margin))
   {
     return zbuf_center;
@@ -813,12 +738,12 @@ static wmOperatorStatus ndof_orbit_invoke_impl(bContext *C,
   const wmNDOFMotionData &ndof = *static_cast<const wmNDOFMotionData *>(event->customdata);
 
   /* off by default, until changed later this function */
-  rv3d->ndof_rot_angle = 0.0f;
+  rv3d->runtime->ndof_rot_angle = 0.0f;
 
   if (ndof.progress != P_FINISHING) {
     const bool has_rotation = ndof_has_rotate(ndof, rv3d);
     /* if we can't rotate, fall back to translate (locked axis views) */
-    const bool has_translate = (RV3D_LOCK_FLAGS(rv3d) & RV3D_LOCK_ROTATION) &&
+    const bool has_translate = (bke::region_view3d_lock_flags_get(rv3d) & RV3D_LOCK_ROTATION) &&
                                ndof_has_translate(ndof, v3d, rv3d);
     const bool has_zoom = (rv3d->is_persp == false) && WM_event_ndof_translation_has_zoom(ndof);
 
@@ -897,7 +822,7 @@ static wmOperatorStatus ndof_orbit_zoom_invoke_impl(bContext *C,
   char xform_flag = 0;
 
   /* off by default, until changed later this function */
-  rv3d->ndof_rot_angle = 0.0f;
+  rv3d->runtime->ndof_rot_angle = 0.0f;
 
   if (ndof.progress == P_FINISHING) {
     /* pass */
@@ -1040,7 +965,7 @@ static wmOperatorStatus ndof_pan_invoke_impl(bContext *C,
   const bool has_zoom = (rv3d->is_persp == false) && WM_event_ndof_translation_has_zoom(ndof);
 
   /* we're panning here! so erase any leftover rotation from other operators */
-  rv3d->ndof_rot_angle = 0.0f;
+  rv3d->runtime->ndof_rot_angle = 0.0f;
 
   if (!(has_translate || has_zoom)) {
     return OPERATOR_CANCELLED;

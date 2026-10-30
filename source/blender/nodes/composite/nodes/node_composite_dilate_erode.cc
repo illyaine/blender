@@ -501,9 +501,7 @@ class DilateErodeOperation : public NodeOperation {
       return true;
     }
 
-    if (this->get_type() == CMP_NODE_DILATE_ERODE_DISTANCE_THRESHOLD &&
-        this->get_falloff_size() != 0.0f)
-    {
+    if (this->get_type() == CMP_NODE_DILATE_ERODE_DISTANCE_THRESHOLD) {
       return false;
     }
 
@@ -531,12 +529,16 @@ class DilateErodeOperation : public NodeOperation {
    * sign indicates either dilation or erosion, where negative values means erosion. */
   int get_size()
   {
-    return this->get_input("Size").get_single_value_default<int>();
+    const float pixel_size = math::average(this->get_input("Mask").domain().pixel_size);
+    const int size = this->get_input("Size").get_single_value_default<int>();
+    return int(size * pixel_size);
   }
 
   float get_falloff_size()
   {
-    return math::max(0.0f, this->get_input("Falloff Size").get_single_value_default<float>());
+    const float pixel_size = math::average(this->get_input("Mask").domain().pixel_size);
+    const float size = this->get_input("Falloff Size").get_single_value_default<float>();
+    return math::max(10e-6f, size * pixel_size);
   }
 
   CMPNodeDilateErodeMethod get_type()

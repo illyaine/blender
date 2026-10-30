@@ -326,8 +326,7 @@ static void voxel_size_edit_draw(const bContext *C, ARegion * /*region*/, void *
   Scene *scene = CTX_data_scene(C);
   const UnitSettings &unit = scene->unit;
 
-  BKE_unit_value_as_string_scaled(
-      str, sizeof(str), cd->voxel_size, -3, B_UNIT_LENGTH, unit, true, true);
+  BKE_unit_value_as_string_scaled(str, cd->voxel_size, -3, B_UNIT_LENGTH, unit, true, true);
   strdrawlen = BLI_strlen_utf8(str);
 
   immUnbindProgram();
@@ -929,7 +928,7 @@ static void quadriflow_end_job(void *customdata)
   Object *ob = qj->owner;
 
   if (qj->is_nonblocking_job) {
-    WM_locked_interface_set(static_cast<wmWindowManager *>(G_MAIN->wm.first), false);
+    WM_locked_interface_set(G_MAIN->wm.first(), false);
   }
 
   ReportList *reports = qj->worker_status->reports;

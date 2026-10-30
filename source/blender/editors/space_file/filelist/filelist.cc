@@ -200,7 +200,9 @@ static bool filelist_compare_asset_libraries(const AssetLibraryReference *librar
   return true;
 }
 
-void filelist_setlibrary(FileList *filelist, const AssetLibraryReference *asset_library_ref)
+void filelist_setlibrary(FileList *filelist,
+                         const AssetLibraryReference *asset_library_ref,
+                         FunctionRef<void()> on_change)
 {
   /* Unset if needed. */
   if (!asset_library_ref) {
@@ -211,15 +213,22 @@ void filelist_setlibrary(FileList *filelist, const AssetLibraryReference *asset_
     return;
   }
 
+  bool changed = false;
   if (!filelist->asset_library_ref) {
     filelist->asset_library_ref = MEM_new<AssetLibraryReference>("filelist asset library");
     *filelist->asset_library_ref = *asset_library_ref;
 
     filelist->flags |= FL_FORCE_RESET;
+    changed = true;
   }
   else if (!filelist_compare_asset_libraries(filelist->asset_library_ref, asset_library_ref)) {
     *filelist->asset_library_ref = *asset_library_ref;
     filelist->flags |= FL_FORCE_RESET;
+    changed = true;
+  }
+
+  if (changed && on_change) {
+    on_change();
   }
 }
 
@@ -246,7 +255,7 @@ void filelist_file_get_full_path(const FileList *filelist,
   }
 
   const char *root = filelist_dir(filelist);
-  BLI_path_join(r_filepath, FILE_MAX_LIBEXTRA, root, file->relpath);
+  BLI_path_join(MutableCStr(r_filepath, FILE_MAX_LIBEXTRA), root, file->relpath);
 }
 
 bool filelist_file_is_preview_pending(const FileList *filelist, const FileDirEntry *file)
@@ -355,7 +364,7 @@ static int filelist_geticon_file_type_ex(const FileList *filelist,
       }
       else if (filelist) {
         filelist_file_get_full_path(filelist, file, fullpath);
-        BLI_path_slash_ensure(fullpath, sizeof(fullpath));
+        BLI_path_slash_ensure(fullpath);
       }
       for (; tfsm; tfsm = tfsm->next) {
         if (STREQ(tfsm->path, target)) {
@@ -1078,7 +1087,7 @@ const char *fileentry_uiname(const char *root, FileListInternEntry *entry, char 
     }
     else {
       char abspath[FILE_MAX_LIBEXTRA];
-      BLI_path_join(abspath, sizeof(abspath), root, relpath);
+      BLI_path_join(abspath, root, relpath);
       name = BLF_display_name_from_file(abspath);
     }
     if (name) {
@@ -1091,7 +1100,7 @@ const char *fileentry_uiname(const char *root, FileListInternEntry *entry, char 
     char abspath[FILE_MAX_LIBEXTRA];
     char *group;
 
-    BLI_path_join(abspath, sizeof(abspath), root, relpath);
+    BLI_path_join(abspath, root, relpath);
     BKE_blendfile_library_path_explode(abspath, buff, &group, &name);
     if (!name) {
       name = group;
@@ -1127,7 +1136,7 @@ void filelist_setdir(FileList *filelist, char dirpath[FILE_MAX_LIBEXTRA])
   BLI_assert(strlen(dirpath) < FILE_MAX_LIBEXTRA);
 
   BLI_path_abs(dirpath, BKE_main_blendfile_path_from_global());
-  BLI_path_normalize_dir(dirpath, FILE_MAX_LIBEXTRA);
+  BLI_path_normalize_dir(MutableCStr(dirpath, FILE_MAX_LIBEXTRA));
   const bool is_valid_path = filelist->check_dir_fn(filelist, dirpath, !allow_invalid);
   BLI_assert(is_valid_path || allow_invalid);
   UNUSED_VARS_NDEBUG(is_valid_path);
@@ -1143,6 +1152,45 @@ void filelist_setrecursion(FileList *filelist, const int recursion_level)
   if (filelist->max_recursion != recursion_level) {
     filelist->max_recursion = recursion_level;
     filelist->flags |= FL_FORCE_RESET;
+  }
+}
+
+void filelist_entry_glob_tag(FileListInternEntry *entry, const char *filter_glob)
+{
+  entry->typeflag &= ~FILE_TYPE_OPERATOR;
+
+  if (entry->typeflag & (FILE_TYPE_DIR | FILE_TYPE_BLENDERLIB)) {
+    return;
+  }
+  if (filter_glob[0] == '\0') {
+    return;
+  }
+
+  /* Aliases & shortcuts match their target, its extension may differ from the link. */
+  const char *path = entry->redirection_path ? entry->redirection_path : entry->relpath;
+  if (BLI_path_extension_check_glob(path, filter_glob)) {
+    entry->typeflag |= FILE_TYPE_OPERATOR;
+  }
+}
+
+void filelist_reset_glob(FileList *filelist)
+{
+  for (FileListInternEntry &entry : filelist->filelist_intern.entries) {
+    filelist_entry_glob_tag(&entry, filelist->filter_glob);
+  }
+
+  filelist->flags &= ~FL_NEED_RESET_GLOB;
+}
+
+void filelist_setglob(FileList *filelist, const char *filter_glob)
+{
+  /* The glob is stored in #FileListInternEntry.typeflag, so filtering again isn't enough.
+   * Re-tag the entries, reading the directory again would be needlessly heavy. */
+
+  if (!STREQ(filelist->filter_glob, filter_glob)) {
+    STRNCPY(filelist->filter_glob, filter_glob);
+    filelist->flags |= FL_NEED_RESET_GLOB;
+    filelist_tag_needs_filtering(filelist);
   }
 }
 

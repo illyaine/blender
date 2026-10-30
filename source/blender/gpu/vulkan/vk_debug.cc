@@ -248,7 +248,8 @@ messenger_callback(VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
       debugging_tools.print_labels(callback_data);
     }
   }
-  else {
+  else if (G.debug & G_DEBUG_GPU) {
+    /* Driver messages can flood the console, only report them when debugging the GPU. */
     const char *format = "%s: %s";
     CLOG_AT_LEVEL(&LOG, level, format, callback_data->pMessageIdName, callback_data->pMessage);
   }

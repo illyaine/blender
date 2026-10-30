@@ -2,11 +2,13 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-import bpy
 from bpy.types import Operator
-from bpy.props import EnumProperty
+from bpy.props import EnumProperty, StringProperty
 from bpy_extras.node_utils import connect_sockets
-from bpy.app.translations import contexts as i18n_contexts
+from bpy.app.translations import (
+    contexts as i18n_contexts,
+    pgettext_tip as tip_,
+)
 from .. import __package__ as base_package
 
 from ..utils.constants import (
@@ -19,8 +21,8 @@ from ..utils.nodes import (
     nw_check,
     nw_check_selected,
     nw_check_space_type,
-    get_nodes_links,
     get_first_enabled_output,
+    get_node_description,
 )
 
 
@@ -32,15 +34,19 @@ class NODE_OT_merge_selected(Operator, NWBase):
     bl_description = "Merge selected nodes"
     bl_options = {'REGISTER', 'UNDO'}
 
+    mode_items = (
+        blend_types +
+        [op for op in geo_combine_operations if op not in blend_types] +
+        [op for op in operations if op not in blend_types]
+    )
+
+    mode_tooltips = {item[0]: item[2] for item in mode_items}
+
     mode: EnumProperty(
         name="Mode",
         translation_context=i18n_contexts.id_nodetree,
         description="All possible blend types, boolean operations and math operations",
-        items=(
-            blend_types +
-            [op for op in geo_combine_operations if op not in blend_types] +
-            [op for op in operations if op not in blend_types]
-        ),
+        items=mode_items,
     )
     merge_type: EnumProperty(
         name="Merge Type",
@@ -55,6 +61,37 @@ class NODE_OT_merge_selected(Operator, NWBase):
             ('ALPHAOVER', 'Alpha Over Node', 'Merge using Alpha Over nodes'),
         ),
     )
+
+    tooltip: StringProperty(
+        name="Description",
+        description="Custom description to use as a tooltip",
+    )
+
+    @classmethod
+    def description(cls, _context, properties):
+        merge_type = properties.merge_type
+        mode = properties.mode
+
+        if merge_type == 'MIX':
+            items = blend_types
+        elif merge_type == 'MATH':
+            items = operations
+        elif merge_type == 'GEOMETRY':
+            items = geo_combine_operations
+        elif merge_type == 'SHADER':
+            return get_node_description(f"ShaderNode{mode.capitalize()}Shader")
+        elif merge_type == 'DEPTH_COMBINE':
+            return get_node_description("CompositorNodeZcombine")
+        elif merge_type == 'ALPHAOVER':
+            return get_node_description("CompositorNodeAlphaOver")
+        else:
+            return ""
+
+        for identifier, _name, description in items:
+            if identifier == mode:
+                return tip_(description)
+
+        return ""
 
     # Check if the link connects to a node that is in selected_nodes
     # If not, then check recursively for each link in the nodes outputs.
@@ -155,7 +192,10 @@ class NODE_OT_merge_selected(Operator, NWBase):
             node_type = 'ShaderNode'
         elif tree_type == 'TEXTURE':
             node_type = 'TextureNode'
-        nodes, links = get_nodes_links(context)
+
+        tree = context.space_data.edit_tree
+        nodes = tree.nodes
+        links = tree.links
         mode = self.mode
         merge_type = self.merge_type
         # Prevent trying to add Depth Combine in not 'COMPOSITING' node tree.
@@ -322,6 +362,10 @@ class NODE_OT_merge_selected(Operator, NWBase):
                         add_type = 'GeometryNodeJoinGeometry'
                         add = self.merge_with_multi_input(
                             nodes_list, merge_position, do_hide, loc_x, links, nodes, add_type, [0])
+                    elif mode == 'INSTANCES':
+                        add_type = 'GeometryNodeGeometryToInstance'
+                        add = self.merge_with_multi_input(
+                            nodes_list, merge_position, do_hide, loc_x, links, nodes, add_type, [0])
                     else:
                         add_type = 'GeometryNodeMeshBoolean'
                         indices = [0, 1] if mode == 'DIFFERENCE' else [1]
@@ -367,6 +411,7 @@ class NODE_OT_merge_selected(Operator, NWBase):
                 'CompositorNodeZcombine': [0, 2],
                 'CompositorNodeAlphaOver': [1, 2],
                 'FunctionNodeBooleanMath': [0, 1],
+                'FunctionNodeIntegerMath': [0, 1],
             }
 
             first, second = socket_dict[add.bl_idname]

@@ -131,13 +131,13 @@ static void vfont_foreach_path(ID *id, BPathForeachPathData *bpath_data)
     return;
   }
 
-  BKE_bpath_foreach_path_fixed_process(bpath_data, vfont->filepath, sizeof(vfont->filepath));
+  BKE_bpath_foreach_path_fixed_process(bpath_data, vfont->filepath);
 }
 
 static void vfont_blend_write(BlendWriter *writer, ID *id, const void *id_address)
 {
   VFont *vf = id_cast<VFont *>(id);
-  const bool is_undo = BLO_write_is_undo(writer);
+  const bool is_undo = writer->is_undo();
 
   /* Clean up, important in undo case to reduce false detection of changed datablocks. */
   vf->data = nullptr;
@@ -184,6 +184,7 @@ IDTypeInfo IDType_ID_VF = {
     .foreach_cache = nullptr,
     .foreach_path = vfont_foreach_path,
     .foreach_working_space_color = nullptr,
+    .foreach_asset_weak_reference = nullptr,
     .owner_pointer_get = nullptr,
 
     .blend_write = vfont_blend_write,
@@ -250,8 +251,8 @@ void BKE_vfont_data_free(VFont *vfont)
           continue;
         }
 
-        while (che->nurbsbase.first) {
-          Nurb *nu = static_cast<Nurb *>(che->nurbsbase.first);
+        while (che->nurbsbase.first()) {
+          Nurb *nu = che->nurbsbase.first();
           if (nu->bezt) {
             MEM_delete(nu->bezt);
           }
@@ -314,7 +315,7 @@ VFont *BKE_vfont_load(Main *bmain, const char *filepath)
     is_builtin = true;
   }
   else {
-    BLI_path_split_file_part(filepath, filename, sizeof(filename));
+    BLI_path_split_file_part(filepath, filename);
     pf = BKE_packedfile_new(nullptr, filepath, BKE_main_blendfile_path(bmain));
 
     is_builtin = false;

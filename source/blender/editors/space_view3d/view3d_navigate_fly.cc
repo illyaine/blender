@@ -22,16 +22,20 @@
 
 #include "MEM_guardedalloc.h"
 
+#include "BLI_listbase.hh"
 #include "BLI_math_matrix_c.hh"
 #include "BLI_math_rotation_c.hh"
 #include "BLI_math_vector_c.hh"
 #include "BLI_rect.hh"
 #include "BLI_time.hh" /* Smooth-view. */
 
+#include "BKE_camera.h"
+#include "BKE_constraint.h"
 #include "BKE_context.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_report.hh"
 #include "BKE_screen.hh"
+#include "BKE_view3d_runtime.hh"
 
 #include "BLT_translation.hh"
 
@@ -233,8 +237,15 @@ static void drawFlyPixel(const bContext * /*C*/, ARegion * /*region*/, void *arg
   int xoff, yoff;
 
   if (ED_view3d_cameracontrol_object_get(fly->v3d_camera_control)) {
-    ED_view3d_calc_camera_border(
-        fly->scene, fly->depsgraph, fly->region, fly->v3d, fly->rv3d, false, false, &viewborder);
+    viewborder = BKE_camera_view_border(fly->scene,
+                                        fly->depsgraph,
+                                        fly->v3d,
+                                        fly->rv3d,
+                                        fly->region->winx,
+                                        fly->region->winy,
+                                        false,
+                                        false,
+                                        false);
     xoff = int(viewborder.xmin);
     yoff = int(viewborder.ymin);
   }
@@ -344,9 +355,14 @@ static bool initFlyInfo(bContext *C, FlyInfo *fly, wmOperator *op, const wmEvent
     return false;
   }
 
-  if (fly->rv3d->persp == RV3D_CAMOB && fly->v3d->camera->constraints.first) {
-    BKE_report(op->reports, RPT_ERROR, "Cannot fly an object with constraints");
-    return false;
+  if (fly->rv3d->persp == RV3D_CAMOB) {
+    for (const bConstraint &con : fly->v3d->camera->constraints) {
+      if (!BKE_constraint_has_influence(&con)) {
+        continue;
+      }
+      BKE_report(op->reports, RPT_ERROR, "Cannot fly an object with effective constraints");
+      return false;
+    }
   }
 
   fly->state = FLY_RUNNING;
@@ -380,7 +396,7 @@ static bool initFlyInfo(bContext *C, FlyInfo *fly, wmOperator *op, const wmEvent
   fly->draw_handle_pixel = ED_region_draw_cb_activate(
       fly->region->runtime->type, drawFlyPixel, fly, REGION_DRAW_POST_PIXEL);
 
-  fly->rv3d->rflag |= RV3D_NAVIGATING;
+  fly->rv3d->runtime->tags |= bke::RV3D_TAG_NAVIGATING;
 
   /* Detect whether to start with Z locking. */
   copy_v3_fl3(upvec, 1.0f, 0.0f, 0.0f);
@@ -395,8 +411,15 @@ static bool initFlyInfo(bContext *C, FlyInfo *fly, wmOperator *op, const wmEvent
 
   /* Calculate center. */
   if (ED_view3d_cameracontrol_object_get(fly->v3d_camera_control)) {
-    ED_view3d_calc_camera_border(
-        fly->scene, fly->depsgraph, fly->region, fly->v3d, fly->rv3d, false, false, &viewborder);
+    viewborder = BKE_camera_view_border(fly->scene,
+                                        fly->depsgraph,
+                                        fly->v3d,
+                                        fly->rv3d,
+                                        fly->region->winx,
+                                        fly->region->winy,
+                                        false,
+                                        false,
+                                        false);
 
     fly->viewport_size[0] = BLI_rctf_size_x(&viewborder);
     fly->viewport_size[1] = BLI_rctf_size_y(&viewborder);
@@ -456,7 +479,7 @@ static wmOperatorStatus flyEnd(bContext *C, FlyInfo *fly)
 
   ED_view3d_cameracontrol_release(fly->v3d_camera_control, fly->state == FLY_CANCEL);
 
-  rv3d->rflag &= ~RV3D_NAVIGATING;
+  rv3d->runtime->tags &= ~bke::RV3D_TAG_NAVIGATING;
 
 #ifdef WITH_INPUT_NDOF
   if (fly->ndof) {
@@ -801,6 +824,11 @@ static int flyApply(bContext *C, FlyInfo *fly, bool is_confirm)
   moffset[0] = float(fly->mval[0] - fly->center_mval[0]);
   moffset[1] = float(fly->mval[1] - fly->center_mval[1]);
 
+  if (rv3d->persp == RV3D_CAMOB && (rv3d->rflag & RV3D_FLIP_X) != 0) {
+    moffset[0] = -moffset[0];
+    moffset[1] = -moffset[1];
+  }
+
   /* Enforce a view margin. */
   if (moffset[0] > xmargin) {
     moffset[0] -= xmargin;
@@ -938,22 +966,13 @@ static int flyApply(bContext *C, FlyInfo *fly, bool is_confirm)
       }
 
       if (fly->zlock == FLY_AXISLOCK_STATE_ACTIVE) {
-        float upvec[3];
-        copy_v3_fl3(upvec, 1.0f, 0.0f, 0.0f);
-        mul_m3_v3(mat, upvec);
-
+        const float horizon_plane[3] = {0.0f, 0.0f, 1.0f};
+        const float factor = 5.0f * time_redraw_clamped * fly->zlock_momentum *
+                             FLY_ZUP_CORRECT_FAC;
         /* Make sure we have some Z rolling. */
-        if (fabsf(upvec[2]) > 0.00001f) {
-          roll = upvec[2] * 5.0f;
-          /* Rotate the view about this axis. */
-          copy_v3_fl3(upvec, 0.0f, 0.0f, 1.0f);
-          mul_m3_v3(mat, upvec);
-          /* Rotate about the relative up vector. */
-          axis_angle_to_quat(tmp_quat,
-                             upvec,
-                             roll * time_redraw_clamped * fly->zlock_momentum *
-                                 FLY_ZUP_CORRECT_FAC);
-          mul_qt_qtqt(rv3d->viewquat, rv3d->viewquat, tmp_quat);
+        if (view3d_horizon_correct_quat_ease_out(rv3d->viewquat, horizon_plane, false, factor) !=
+            0.0f)
+        {
           changed_viewquat = true;
 
           fly->zlock_momentum += FLY_ZUP_CORRECT_ACCEL;
@@ -1114,7 +1133,7 @@ static wmOperatorStatus fly_invoke(bContext *C, wmOperator *op, const wmEvent *e
 {
   RegionView3D *rv3d = CTX_wm_region_view3d(C);
 
-  if (RV3D_LOCK_FLAGS(rv3d) & RV3D_LOCK_ANY_TRANSFORM) {
+  if (bke::region_view3d_lock_flags_get(rv3d) & RV3D_LOCK_ANY_TRANSFORM) {
     return OPERATOR_CANCELLED;
   }
 

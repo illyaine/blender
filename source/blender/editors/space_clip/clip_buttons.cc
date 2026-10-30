@@ -94,7 +94,7 @@ void ED_clip_buttons_register(ARegionType *art)
 void uiTemplateMovieClip(
     ui::Layout *layout, bContext *C, PointerRNA *ptr, const StringRefNull propname, bool compact)
 {
-  if (!ptr->data) {
+  if (!*ptr) {
     return;
   }
 
@@ -147,7 +147,7 @@ void uiTemplateMovieClip(
 
 void uiTemplateTrack(ui::Layout *layout, PointerRNA *ptr, const StringRefNull propname)
 {
-  if (!ptr->data) {
+  if (!*ptr) {
     return;
   }
 
@@ -379,7 +379,7 @@ void uiTemplateMarker(ui::Layout *layout,
                       PointerRNA *trackptr,
                       bool compact)
 {
-  if (!ptr->data) {
+  if (!*ptr) {
     return;
   }
 
@@ -719,7 +719,7 @@ void uiTemplateMovieclipInformation(ui::Layout *layout,
                                     const StringRefNull propname,
                                     PointerRNA *userptr)
 {
-  if (!ptr->data) {
+  if (!*ptr) {
     return;
   }
 
@@ -760,39 +760,39 @@ void uiTemplateMovieclipInformation(ui::Layout *layout,
 
   char str[1024];
   size_t ofs = 0;
-  ofs += BLI_snprintf_utf8_rlen(str + ofs, sizeof(str) - ofs, RPT_("%d x %d"), width, height);
+  ofs += SNPRINTF_UTF8_RLEN(MutableCStr(str).drop_front(ofs), RPT_("%d x %d"), width, height);
 
   if (ibuf) {
     if (ibuf->float_data()) {
       if (ibuf->channels != 4) {
-        ofs += BLI_snprintf_utf8_rlen(
-            str + ofs, sizeof(str) - ofs, RPT_(", %d float channel(s)"), ibuf->channels);
+        ofs += SNPRINTF_UTF8_RLEN(
+            MutableCStr(str).drop_front(ofs), RPT_(", %d float channel(s)"), ibuf->channels);
       }
       else if (ibuf->color_mode == ImColorMode::RGBA) {
-        ofs += BLI_strncpy_utf8_rlen(str + ofs, RPT_(", RGBA float"), sizeof(str) - ofs);
+        ofs += STRNCPY_UTF8_RLEN(MutableCStr(str).drop_front(ofs), RPT_(", RGBA float"));
       }
       else {
-        ofs += BLI_strncpy_utf8_rlen(str + ofs, RPT_(", RGB float"), sizeof(str) - ofs);
+        ofs += STRNCPY_UTF8_RLEN(MutableCStr(str).drop_front(ofs), RPT_(", RGB float"));
       }
     }
     else {
       if (ibuf->color_mode == ImColorMode::RGBA) {
-        ofs += BLI_strncpy_utf8_rlen(str + ofs, RPT_(", RGBA byte"), sizeof(str) - ofs);
+        ofs += STRNCPY_UTF8_RLEN(MutableCStr(str).drop_front(ofs), RPT_(", RGBA byte"));
       }
       else {
-        ofs += BLI_strncpy_utf8_rlen(str + ofs, RPT_(", RGB byte"), sizeof(str) - ofs);
+        ofs += STRNCPY_UTF8_RLEN(MutableCStr(str).drop_front(ofs), RPT_(", RGB byte"));
       }
     }
 
     if (clip->anim != nullptr) {
       float fps = MOV_get_fps(clip->anim);
       if (fps > 0.0f) {
-        ofs += BLI_snprintf_utf8_rlen(str + ofs, sizeof(str) - ofs, RPT_(", %.2f fps"), fps);
+        ofs += SNPRINTF_UTF8_RLEN(MutableCStr(str).drop_front(ofs), RPT_(", %.2f fps"), fps);
       }
     }
   }
   else {
-    ofs += BLI_strncpy_utf8_rlen(str + ofs, RPT_(", failed to load"), sizeof(str) - ofs);
+    ofs += STRNCPY_UTF8_RLEN(MutableCStr(str).drop_front(ofs), RPT_(", failed to load"));
   }
   UNUSED_VARS(ofs);
 

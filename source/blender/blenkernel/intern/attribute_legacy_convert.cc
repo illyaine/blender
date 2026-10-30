@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bke
+ */
+
 #define DNA_DEPRECATED_ALLOW
 
 #include <optional>
@@ -46,6 +50,7 @@ std::optional<AttrType> custom_data_type_to_attr_type(const eCustomDataType data
     case CD_TESSLOOPNORMAL:
     case CD_FREESTYLE_EDGE:
     case CD_FREESTYLE_FACE:
+    case CD_MVERT_SKIN:
       return std::nullopt;
 
     /* These types are only used for #BMesh. */
@@ -62,7 +67,6 @@ std::optional<AttrType> custom_data_type_to_attr_type(const eCustomDataType data
 
     /* Custom data on vertices. */
     case CD_MDEFORMVERT:
-    case CD_MVERT_SKIN:
     case CD_ORCO:
     case CD_CLOTH_ORCO:
       return std::nullopt;
@@ -156,19 +160,17 @@ static void attribute_legacy_convert_customdata_to_storage(
   }
 
   for (AttributeToAdd &attribute : attributes_to_add) {
-    bke::Attribute::ArrayData array_data;
+    bke::GList::ArrayData array_data;
     array_data.data = attribute.array_data;
-    array_data.size = attribute.array_size;
     array_data.sharing_info = ImplicitSharingPtr<>(attribute.sharing_info);
-    if (Attribute *attr = storage.lookup(attribute.name)) {
-      attr->assign_data(std::move(array_data));
+    if (storage.lookup(attribute.name)) {
+      storage.remove(attribute.name);
     }
-    else {
-      storage.add(storage.unique_name_calc(attribute.name),
-                  attribute.domain,
-                  attribute.type,
-                  std::move(array_data));
-    }
+    storage.add(storage.unique_name_calc(attribute.name),
+                attribute.domain,
+                GList(attribute_type_to_cpp_type(attribute.type),
+                      std::move(array_data),
+                      attribute.array_size));
   }
 
   for (const auto &[domain, custom_data] : domains.items()) {
@@ -325,21 +327,11 @@ LegacyMeshInterpolator::LegacyMeshInterpolator(const Mesh &src, Mesh &dst, const
     if (dst_attr->storage_type() != AttrStorageType::Array) {
       continue;
     }
-    const CPPType &cpp_type = attribute_type_to_cpp_type(src_attr.data_type());
-    switch (src_attr.storage_type()) {
-      case AttrStorageType::Single: {
-        const auto &value = std::get<Attribute::SingleData>(src_attr.data());
-        attrs_src_.append(GVArray::from_single_ref(cpp_type, src_domain_size, value.value));
-        break;
-      }
-      case AttrStorageType::Array: {
-        const auto &value = std::get<Attribute::ArrayData>(src_attr.data());
-        attrs_src_.append(GVArray::from_span({cpp_type, value.data, src_domain_size}));
-        break;
-      }
-    }
-    auto &value = std::get<Attribute::ArrayData>(dst_attr->data_for_write());
-    attrs_dst_.append({cpp_type, value.data, dst_domain_size});
+    BLI_assert(src_attr.data().size() == src_domain_size);
+    BLI_assert(dst_attr->data().size() == dst_domain_size);
+    UNUSED_VARS_NDEBUG(src_domain_size, dst_domain_size);
+    attrs_src_.append(src_attr.data().varray());
+    attrs_dst_.append(std::get<GMutableSpan>(dst_attr->data().values_for_write()));
   }
 }
 

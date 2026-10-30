@@ -69,7 +69,11 @@ using namespace blender::compositor;
 
 class TranslateOperation : public NodeOperation {
  public:
-  using NodeOperation::NodeOperation;
+  TranslateOperation(Context &context, const bNode &node) : NodeOperation(context, node)
+  {
+    InputDescriptor &image_descriptor = this->get_input_descriptor("Image");
+    image_descriptor.skip_type_conversion = true;
+  }
 
   void execute() override
   {
@@ -77,9 +81,10 @@ class TranslateOperation : public NodeOperation {
 
     float x = this->get_input("X").get_single_value_default<float>();
     float y = this->get_input("Y").get_single_value_default<float>();
-    const float2 translation = float2(x, y);
+    const float2 translation = float2(x, y) * input.domain().pixel_size;
 
     Result &output = this->get_result("Image");
+    output.set_type(input.type());
     output.share_data(input);
     output.transform(math::from_location<float3x3>(translation));
     output.get_realization_options().interpolation = this->get_interpolation();
@@ -135,6 +140,11 @@ class TranslateOperation : public NodeOperation {
     }
 
     return Extension::Clip;
+  }
+
+  bool uses_asynchronous_execution() const override
+  {
+    return false;
   }
 };
 

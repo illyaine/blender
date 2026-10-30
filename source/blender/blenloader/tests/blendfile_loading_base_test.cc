@@ -82,7 +82,7 @@ void BlendfileLoadingBaseTest::SetUpTestCase()
 
   /* Allocate a dummy window manager. The real window manager will try and load Python scripts from
    * the release directory, which it won't be able to find. */
-  ASSERT_EQ(G.main->wm.first, nullptr);
+  ASSERT_EQ(G.main->wm.first_, nullptr);
   wmWindowManager *wm = BKE_id_new<wmWindowManager>(G.main, "WMdummy");
   wm->runtime = MEM_new<bke::WindowManagerRuntime>(__func__);
 }
@@ -124,7 +124,7 @@ bool BlendfileLoadingBaseTest::blendfile_load(const char *filepath)
   }
 
   char abspath[FILE_MAX];
-  BLI_path_join(abspath, sizeof(abspath), test_assets_dir.c_str(), filepath);
+  BLI_path_join(abspath, test_assets_dir.c_str(), filepath);
 
   BlendFileReadReport bf_reports = {};
   bfile = BLO_read_from_file(abspath, BLO_READ_SKIP_NONE, &bf_reports);

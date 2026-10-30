@@ -48,6 +48,7 @@ static void node_layout(ui::Layout &layout, bContext * /*C*/, PointerRNA *ptr)
 
 static void node_layout_ex(ui::Layout &layout, bContext * /*C*/, PointerRNA *ptr)
 {
+  layout.prop(ptr, "socket_type", UI_ITEM_NONE, "", ICON_NONE);
   layout.use_property_split_set(true);
   layout.use_property_decorate_set(false);
   layout.prop(ptr, "structure_type", UI_ITEM_NONE, IFACE_("Shape"), ICON_NONE);
@@ -122,9 +123,10 @@ static bke::SocketValueVariant get_single_item(GListPtr &list,
                                                const int64_t index)
 {
   bke::SocketValueVariant value;
-  void *value_ptr = value.allocate_single(socket_type);
+  const CPPType &cpp_type = *bke::socket_type_to_geo_nodes_base_cpp_type(socket_type);
+  void *value_ptr = value.allocate_single(cpp_type);
   if (const auto *data = std::get_if<GList::ArrayData>(&list->data())) {
-    if (list->is_mutable() && data->sharing_info->is_mutable()) {
+    if (list.is_mutable() && data->sharing_info->is_mutable()) {
       GMutableSpan data_span(list->cpp_type(), const_cast<void *>(data->data), list->size());
       list->cpp_type().move_construct(data_span[index], value_ptr);
       return value;
@@ -134,7 +136,7 @@ static bke::SocketValueVariant get_single_item(GListPtr &list,
     return value;
   }
   if (const auto *data = std::get_if<GList::SingleData>(&list->data())) {
-    if (list->is_mutable() && data->sharing_info->is_mutable()) {
+    if (list.is_mutable() && data->sharing_info->is_mutable()) {
       list->cpp_type().move_construct(const_cast<void *>(data->value), value_ptr);
       return value;
     }
@@ -148,7 +150,7 @@ static bke::SocketValueVariant get_single_item(GListPtr &list,
 static bke::SocketValueVariant get_socket_value_item(GListPtr &list, const int64_t index)
 {
   if (const auto *data = std::get_if<GList::ArrayData>(&list->data())) {
-    if (list->is_mutable() && data->sharing_info->is_mutable()) {
+    if (list.is_mutable() && data->sharing_info->is_mutable()) {
       MutableSpan data_span(static_cast<bke::SocketValueVariant *>(const_cast<void *>(data->data)),
                             list->size());
       return std::move(data_span[index]);
@@ -158,7 +160,7 @@ static bke::SocketValueVariant get_socket_value_item(GListPtr &list, const int64
     return data_span[index];
   }
   if (const auto *data = std::get_if<GList::SingleData>(&list->data())) {
-    if (list->is_mutable() && data->sharing_info->is_mutable()) {
+    if (list.is_mutable() && data->sharing_info->is_mutable()) {
       return std::move(*static_cast<bke::SocketValueVariant *>(const_cast<void *>(data->value)));
     }
     return *static_cast<const bke::SocketValueVariant *>(data->value);
@@ -185,8 +187,7 @@ static void node_geo_exec(GeoNodeExecParams params)
       params.set_default_remaining_outputs();
       return;
     }
-    index.convert_to_single();
-    const int index_int = index.get<int>();
+    const int index_int = index.ensure_type<int>();
     if (!IndexRange(list->size()).contains(index_int)) {
       params.error_message_add(NodeWarningType::Error, "Index out of range");
       params.set_default_remaining_outputs();

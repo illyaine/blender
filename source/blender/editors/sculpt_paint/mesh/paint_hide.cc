@@ -222,7 +222,7 @@ static void flush_face_changes_node(Mesh &mesh,
   const OffsetIndices<int> faces = mesh.faces();
   const Span<int> corner_verts = mesh.corner_verts();
 
-  bke::SpanAttributeWriter<bool> hide_poly = attributes.lookup_or_add_for_write_span<bool>(
+  bke::SpanAttributeWriter<bool> hide_poly = attributes.ensure_for_write_span<bool>(
       ".hide_poly", bke::AttrDomain::Face);
 
   MutableSpan<bke::pbvh::MeshNode> nodes = pbvh.nodes<bke::pbvh::MeshNode>();
@@ -267,7 +267,7 @@ static void flush_face_changes(Mesh &mesh, const Span<bool> hide_vert)
 {
   bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
 
-  bke::SpanAttributeWriter<bool> hide_poly = attributes.lookup_or_add_for_write_span<bool>(
+  bke::SpanAttributeWriter<bool> hide_poly = attributes.ensure_for_write_span<bool>(
       ".hide_poly", bke::AttrDomain::Face);
 
   bke::mesh_face_hide_from_vert(mesh.faces(), mesh.corner_verts(), hide_vert, hide_poly.span);
@@ -279,7 +279,7 @@ static void flush_edge_changes(Mesh &mesh, const Span<bool> hide_vert)
 {
   bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
 
-  bke::SpanAttributeWriter<bool> hide_edge = attributes.lookup_or_add_for_write_only_span<bool>(
+  bke::SpanAttributeWriter<bool> hide_edge = attributes.ensure_for_write_only_span<bool>(
       ".hide_edge", bke::AttrDomain::Edge);
   bke::mesh_edge_hide_from_vert(mesh.edges(), hide_vert, hide_edge.span);
   hide_edge.finish();
@@ -295,7 +295,7 @@ static void vert_hide_update(const Depsgraph &depsgraph,
 
   Mesh &mesh = *id_cast<Mesh *>(object.data);
   bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
-  bke::SpanAttributeWriter<bool> hide_vert = attributes.lookup_or_add_for_write_span<bool>(
+  bke::SpanAttributeWriter<bool> hide_vert = attributes.ensure_for_write_span<bool>(
       ".hide_vert", bke::AttrDomain::Point);
 
   bool any_changed = false;
@@ -354,9 +354,11 @@ static void grid_hide_update(Depsgraph &depsgraph,
           calc_hide(grids[i], new_hide[i]);
         }
 
-        if (std::all_of(grids.index_range().begin(), grids.index_range().end(), [&](const int i) {
-              return bits::spans_equal(grid_hidden[grids[i]], new_hide[i]);
-            }))
+        if (std::all_of(grids.index_range().begin(),
+                        grids.index_range().end(),
+                        [&](const int i) {
+                          return bits::spans_equal(grid_hidden[grids[i]], new_hide[i]);
+                        }))
         {
           return;
         }
@@ -409,7 +411,7 @@ static void partialvis_update_bmesh_verts(const Set<BMVert *, 0> &verts,
 static void partialvis_update_bmesh_faces(const Set<BMFace *, 0> &faces)
 {
   for (BMFace *f : faces) {
-    if (paint_is_bmesh_face_hidden(f)) {
+    if (BKE_paint_is_bmesh_face_hidden(f)) {
       BM_elem_flag_enable(f, BM_ELEM_HIDDEN);
     }
     else {
@@ -732,7 +734,7 @@ static void invert_visibility_mesh(const Depsgraph &depsgraph,
 
   Mesh &mesh = *id_cast<Mesh *>(object.data);
   bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
-  bke::SpanAttributeWriter<bool> hide_poly = attributes.lookup_or_add_for_write_span<bool>(
+  bke::SpanAttributeWriter<bool> hide_poly = attributes.ensure_for_write_span<bool>(
       ".hide_poly", bke::AttrDomain::Face);
 
   undo::push_nodes(depsgraph, object, node_mask, undo::Type::HideFace);
@@ -985,7 +987,7 @@ static void grow_shrink_visibility_mesh(const Depsgraph &depsgraph,
     return;
   }
 
-  bke::SpanAttributeWriter<bool> hide_vert = attributes.lookup_or_add_for_write_span<bool>(
+  bke::SpanAttributeWriter<bool> hide_vert = attributes.ensure_for_write_span<bool>(
       ".hide_vert", bke::AttrDomain::Point);
   const VArraySpan hide_poly = *attributes.lookup_or_default<bool>(
       ".hide_poly", bke::AttrDomain::Face, false);
@@ -1251,12 +1253,21 @@ static void partialvis_gesture_update_mesh(gesture::GestureData &gesture_data)
     return;
   }
 
+  const View3D *v3d = gesture_data.vc.v3d;
+  RegionView3D *rv3d = gesture_data.vc.rv3d;
+  const bool clipping_enabled = RV3D_CLIPPING_ENABLED(v3d, rv3d);
+  if (clipping_enabled) {
+    ED_view3d_clipping_local(rv3d, object->object_to_world().ptr());
+  }
   const bool value = action_to_hide(action);
   const Span<float3> positions = bke::pbvh::vert_positions_eval(depsgraph, *object);
   const Span<float3> normals = bke::pbvh::vert_normals_eval(depsgraph, *object);
   vert_hide_update(
       depsgraph, *object, node_mask, [&](const Span<int> verts, MutableSpan<bool> hide) {
         for (const int i : verts.index_range()) {
+          if (clipping_enabled && ED_view3d_clipping_test(rv3d, positions[verts[i]], true)) {
+            continue;
+          }
           if (gesture::is_affected(gesture_data, positions[verts[i]], normals[verts[i]])) {
             hide[i] = value;
           }
@@ -1274,6 +1285,13 @@ static void partialvis_gesture_update_grids(Depsgraph &depsgraph,
 
   SubdivCCG &subdiv_ccg = *object->runtime->sculpt_session->subdiv_ccg;
 
+  const View3D *v3d = gesture_data.vc.v3d;
+  RegionView3D *rv3d = gesture_data.vc.rv3d;
+  const bool clipping_enabled = RV3D_CLIPPING_ENABLED(v3d, rv3d);
+  if (clipping_enabled) {
+    ED_view3d_clipping_local(rv3d, object->object_to_world().ptr());
+  }
+
   const bool value = action_to_hide(action);
   const CCGKey key = BKE_subdiv_ccg_key_top_level(subdiv_ccg);
   const Span<float3> positions = subdiv_ccg.positions;
@@ -1282,6 +1300,9 @@ static void partialvis_gesture_update_grids(Depsgraph &depsgraph,
     const Span<float3> grid_positions = positions.slice(bke::ccg::grid_range(key, grid));
     const Span<float3> grid_normals = normals.slice(bke::ccg::grid_range(key, grid));
     for (const int i : grid_positions.index_range()) {
+      if (clipping_enabled && ED_view3d_clipping_test(rv3d, grid_positions[i], true)) {
+        continue;
+      }
       if (gesture::is_affected(gesture_data, grid_positions[i], grid_normals[i])) {
         hide[i].set(value);
       }
@@ -1291,7 +1312,19 @@ static void partialvis_gesture_update_grids(Depsgraph &depsgraph,
 
 static void partialvis_gesture_update_bmesh(gesture::GestureData &gesture_data)
 {
+  const View3D *v3d = gesture_data.vc.v3d;
+  RegionView3D *rv3d = gesture_data.vc.rv3d;
+  Object *object = gesture_data.vc.obact;
+
+  const bool clipping_enabled = RV3D_CLIPPING_ENABLED(v3d, rv3d);
+  if (clipping_enabled) {
+    ED_view3d_clipping_local(rv3d, object->object_to_world().ptr());
+  }
+
   const auto selection_test_fn = [&](const BMVert *v) {
+    if (clipping_enabled && ED_view3d_clipping_test(rv3d, v->co, true)) {
+      return false;
+    }
     return gesture::is_affected(gesture_data, v->co, v->no);
   };
 

@@ -139,7 +139,7 @@ bool search_item_add(SearchItems *items,
   }
 
   if (items->names) {
-    name.copy_utf8_truncated(items->names[items->totitem], items->maxstrlen);
+    name.copy_utf8_truncated(MutableCStr(items->names[items->totitem], items->maxstrlen));
   }
   if (items->pointers) {
     items->pointers[items->totitem] = poin;
@@ -390,7 +390,7 @@ static ARegion *wm_searchbox_tooltip_init(
       searchbox_butrect(&rect, data, data->active);
 
       return search_but->item_tooltip_fn(
-          C, region, &rect, search_but->arg, search_but->item_active);
+          C, region, &rect, search_but->arg.get(), search_but->item_active);
     }
   }
   return nullptr;
@@ -435,7 +435,7 @@ bool searchbox_event(
             {
 
               void *active = data->items.pointers[data->active];
-              if (search_but->item_context_menu_fn(C, search_but->arg, active, event)) {
+              if (search_but->item_context_menu_fn(C, search_but->arg.get(), active, event)) {
                 handled = true;
               }
             }
@@ -509,7 +509,7 @@ static void searchbox_update_fn(bContext *C,
     WM_tooltip_clear(C, win);
   }
   const bool is_first_search = !but->changed;
-  but->items_update_fn(C, but->arg, str, items, is_first_search);
+  but->items_update_fn(C, but->arg.get(), str, items, is_first_search);
 }
 
 void searchbox_update(bContext *C, ARegion *region, Button *but, const bool reset)
@@ -585,7 +585,7 @@ void searchbox_update(bContext *C, ARegion *region, Button *but, const bool rese
   }
 
   /* Nothing active, check at mouse location. */
-  if (data->active == -1) {
+  if (data->active == -1 && data->search_but && data->search_but->editstr[0] == '\0') {
     wmWindow *win = CTX_wm_window(C);
     if (win && win->runtime && win->runtime->eventstate) {
       const int cursor_x = win->runtime->eventstate->xy[0];
@@ -1004,7 +1004,7 @@ static ARegion *searchbox_create_generic_ex(bContext *C,
 
   /* Create search-box data. */
   uiSearchboxData *data = MEM_new<uiSearchboxData>(__func__);
-  data->search_arg = but->arg;
+  data->search_arg = but->arg.get();
   data->search_but = but;
   data->butregion = butregion;
   data->size_set = false;
@@ -1074,11 +1074,11 @@ ARegion *searchbox_create_generic(bContext *C, ARegion *butregion, ButtonSearch 
  * - we know words are upper case and ASCII only.
  * - `_` are replaced by spaces.
  */
-static void str_tolower_titlecaps_ascii(char *str, const size_t len)
+static void str_tolower_titlecaps_ascii(MutableCStr str)
 {
   bool prev_delim = true;
 
-  for (size_t i = 0; (i < len) && str[i]; i++) {
+  for (size_t i = 0; (i < str.size()) && str[i]; i++) {
     if (str[i] >= 'A' && str[i] <= 'Z') {
       if (prev_delim == false) {
         str[i] += 'a' - 'A';
@@ -1135,7 +1135,7 @@ static void searchbox_region_draw_cb__operator(const bContext * /*C*/, ARegion *
               text_pre, ot->idname, min_ii(sizeof(text_pre), text_pre_p - ot->idname));
           text_pre[text_pre_len] = ':';
           text_pre[text_pre_len + 1] = '\0';
-          str_tolower_titlecaps_ascii(text_pre, sizeof(text_pre));
+          str_tolower_titlecaps_ascii(text_pre);
         }
 
         draw_menu_item(&data->fstyle,

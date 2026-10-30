@@ -94,14 +94,14 @@ void ensure_surface_deformation_node_exists(bContext &C, Object &curves_ob)
 
   bke::node_add_link(*ntree,
                      *group_input,
-                     *static_cast<bNodeSocket *>(group_input->outputs.first),
+                     *group_input->outputs.first(),
                      *deform_node,
                      *bke::node_find_socket(*deform_node, SOCK_IN, "Curves"_ustr));
   bke::node_add_link(*ntree,
                      *deform_node,
                      *bke::node_find_socket(*deform_node, SOCK_OUT, "Curves"_ustr),
                      *group_output,
-                     *static_cast<bNodeSocket *>(group_output->inputs.first));
+                     *group_output->inputs.first());
 
   group_input->location[0] = -200;
   group_output->location[0] = 200;
@@ -117,7 +117,7 @@ bke::CurvesGeometry primitive_random_sphere(const int curves_size, const int poi
   MutableSpan<int> offsets = curves.offsets_for_write();
   MutableSpan<float3> positions = curves.positions_for_write();
   bke::MutableAttributeAccessor attributes = curves.attributes_for_write();
-  bke::SpanAttributeWriter<float> radius = attributes.lookup_or_add_for_write_only_span<float>(
+  bke::SpanAttributeWriter<float> radius = attributes.ensure_for_write_only_span<float>(
       "radius", bke::AttrDomain::Point);
 
   for (const int i : offsets.index_range()) {

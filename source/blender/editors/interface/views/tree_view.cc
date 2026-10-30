@@ -296,8 +296,7 @@ int AbstractTreeView::count_visible_descendants(const AbstractTreeViewItem &pare
   return count;
 }
 
-void AbstractTreeView::get_hierarchy_lines(const ARegion &region,
-                                           const TreeViewOrItem &parent,
+void AbstractTreeView::get_hierarchy_lines(const TreeViewOrItem &parent,
                                            const float aspect,
                                            Vector<std::pair<int2, int2>> &lines,
                                            int &visible_item_index) const
@@ -356,7 +355,7 @@ void AbstractTreeView::get_hierarchy_lines(const ARegion &region,
                      padded_item_height() / aspect;
     lines.append(std::make_pair(int2(x, ymax), int2(x, ymin)));
 
-    this->get_hierarchy_lines(region, *item, aspect, lines, visible_item_index);
+    this->get_hierarchy_lines(*item, aspect, lines, visible_item_index);
   }
 }
 
@@ -400,7 +399,7 @@ void AbstractTreeView::draw_hierarchy_lines(const ARegion &region, const Block &
 
   Vector<std::pair<int2, int2>> lines;
   int index = 0;
-  get_hierarchy_lines(region, *this, aspect, lines, index);
+  get_hierarchy_lines(*this, aspect, lines, index);
   if (lines.is_empty()) {
     return;
   }
@@ -689,6 +688,8 @@ void AbstractTreeViewItem::add_collapse_chevron(Block &block) const
   Button *but = uiDefIconBut(
       &block, ButtonType::ButToggle, icon, 0, 0, UI_TREEVIEW_INDENT, UI_UNIT_Y, nullptr, 0, 0, "");
   button_func_set(but, collapse_chevron_click_fn, nullptr, nullptr);
+  /* To make drag toggle work. */
+  button_func_pushed_state_set(but, [this](const Button &) { return this->is_collapsed(); });
   button_flag_disable(but, BUT_UNDO);
 }
 
@@ -1298,7 +1299,7 @@ void TreeViewBuilder::build_tree_view(const bContext &C,
   {
     /* Setup search string to filter out elements with matching characters. */
     char string[UI_MAX_NAME_STR];
-    BLI_strncpy_ensure_pad(string, tree_view.search_string_.get(), '*', sizeof(string));
+    BLI_strncpy_ensure_pad(string, tree_view.search_string_.get(), '*');
     tree_view.filter(tree_view.search_string_ ? std::optional{string} : std::nullopt);
   }
   ensure_min_rows_items(tree_view);

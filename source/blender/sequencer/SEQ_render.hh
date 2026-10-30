@@ -36,8 +36,6 @@ struct RenderData {
   eSpaceSeq_Proxy_RenderSize preview_render_size = SEQ_RENDER_SIZE_SCENE;
   bool use_proxies = false;
   bool ignore_missing_media = false;
-  int motion_blur_samples = 0;
-  float motion_blur_shutter = 0.0f;
   bool skip_cache = false;
   bool is_prefetch_render = false;
   bool is_playing = false;
@@ -93,10 +91,16 @@ bool render_is_muted(const ListBaseT<SeqTimelineChannel> *channels, const Strip 
 float get_render_scale_factor(eSpaceSeq_Proxy_RenderSize render_size, short scene_render_scale);
 float get_render_scale_factor(const RenderData &context);
 
-/* Enables an appropriate GPU context if possible, if GPU rendering is not possible, the functions
- * returns false. The render_end_gpu function should be called to disable the context. */
-bool render_begin_gpu(const RenderData &rd);
-void render_end_gpu(const RenderData &rd);
+enum class GpuContextState {
+  Unsupported,
+  Success,
+  AlreadyActive,
+};
+/* Enables an appropriate GPU context if possible. If GPU rendering is not possible, the functions
+ * returns #GpuContextState::Unsupported. The render_end_gpu function should be called to disable
+ * the context. */
+GpuContextState render_begin_gpu(const RenderData &rd);
+void render_end_gpu(const RenderData &rd, GpuContextState state);
 
 /**
  * Render thumbnail for a scene strip. Thumbnail is rendered with "solid" draw mode for

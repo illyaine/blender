@@ -2,12 +2,17 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup editors
+ */
+
 #pragma once
 
 #include <optional>
 
 #include "BLI_bounds.hh"
 #include "BLI_compute_context.hh"
+#include "BLI_map.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_string_ref.hh"
 #include "BLI_vector_set.hh"
@@ -103,6 +108,11 @@ std::optional<nodes::FoundNestedNodeID> find_nested_node_id_in_root(const SpaceN
                                                                     const bNode &node);
 std::optional<nodes::FoundNestedNodeID> find_nested_node_id_in_root(
     const bNodeTree &root_tree, const ComputeContext *compute_context, const int node_id);
+
+/**
+ * Finds the context object for the node editor, taking pinning into account.
+ */
+Object *get_space_editor_object(const bContext *C);
 
 struct ObjectAndModifier {
   const Object *object = nullptr;

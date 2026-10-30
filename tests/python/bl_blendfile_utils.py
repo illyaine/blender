@@ -93,11 +93,12 @@ class TestBlendLibLinkHelper(TestHelper):
     def gen_library_data_(self):
         me = bpy.data.meshes.new("LibMesh")
         ob = bpy.data.objects.new("LibMesh", me)
+        ob.shape_key_add()
         coll = bpy.data.collections.new("LibMesh")
         coll.objects.link(ob)
         bpy.context.scene.collection.children.link(coll)
 
-    # Actual init code, generating blendfiles for various linking/appending scenarii.
+    # Actual init code, generating blendfiles for various linking/appending scenarios.
 
     def init_lib_data_basic(self):
         self.reset_blender()

@@ -30,7 +30,6 @@ set(SRC
   intern/BLI_linklist_lockfree.cc
   intern/BLI_memarena.cc
   intern/BLI_memblock.cc
-  intern/BLI_memiter.cc
   intern/BLI_mempool.cc
   intern/BLI_mmap.cc
   intern/BLI_subprocess.cc
@@ -81,6 +80,7 @@ set(SRC
   intern/index_mask_expression.cc
   intern/index_range.cc
   intern/jitter_2d.cc
+  intern/kdtree.cc
   intern/lasso_2d.cc
   intern/lazy_threading.cc
   intern/length_parameterize.cc
@@ -195,6 +195,8 @@ set(SRC
   BLI_bounds_types.hh
   BLI_boxpack_2d.hh
   BLI_build_config.hh
+  BLI_bytes_type.hh
+  BLI_bytes_type_common.hh
   BLI_cache_mutex.hh
   BLI_color.hh
   BLI_color_mix.hh
@@ -206,6 +208,7 @@ set(SRC
   BLI_compression.hh
   BLI_compute_context.hh
   BLI_concurrent_map.hh
+  BLI_concurrent_set.hh
   BLI_console.hh
   BLI_convexhull_2d.hh
   BLI_cpp_type.hh
@@ -217,6 +220,7 @@ set(SRC
   BLI_disjoint_set.hh
   BLI_dot_export.hh
   BLI_dot_export_attribute_enums.hh
+  BLI_dot_export_fwd.hh
   BLI_dynamic_stack_buffer.hh
   BLI_dynstr.hh
   BLI_easing.hh
@@ -268,8 +272,7 @@ set(SRC
   BLI_iterator.hh
   BLI_jitter_2d.hh
   BLI_kdopbvh.hh
-  BLI_kdtree.hh
-  BLI_kdtree_types.hh
+  BLI_kdtree_new.hh
   BLI_lasso_2d.hh
   BLI_lazy_threading.hh
   BLI_length_parameterize.hh
@@ -326,7 +329,6 @@ set(SRC
   BLI_math_vector_unroll.hh
   BLI_memarena.hh
   BLI_memblock.hh
-  BLI_memiter.hh
   BLI_memory_cache.hh
   BLI_memory_cache_file_load.hh
   BLI_memory_counter.hh
@@ -336,6 +338,7 @@ set(SRC
   BLI_mesh_boolean.hh
   BLI_mesh_intersect.hh
   BLI_mmap.hh
+  BLI_multi_eval_varray.hh
   BLI_multi_value_map.hh
   BLI_mutex.hh
   BLI_noise.hh
@@ -544,6 +547,7 @@ if(WITH_GTESTS)
     tests/BLI_index_ranges_builder_test.cc
     tests/BLI_inplace_priority_queue_test.cc
     tests/BLI_kdopbvh_test.cc
+    tests/BLI_kdtree_test.cc
     tests/BLI_length_parameterize_test.cc
     tests/BLI_linear_allocator_chunked_list_test.cc
     tests/BLI_linear_allocator_test.cc
@@ -566,12 +570,12 @@ if(WITH_GTESTS)
     tests/BLI_math_time_test.cc
     tests/BLI_math_vector_test.cc
     tests/BLI_math_vector_types_test.cc
-    tests/BLI_memiter_test.cc
     tests/BLI_memory_cache_test.cc
     tests/BLI_memory_counter_test.cc
     tests/BLI_memory_utils_test.cc
     tests/BLI_mesh_boolean_test.cc
     tests/BLI_mesh_intersect_test.cc
+    tests/BLI_multi_eval_varray_test.cc
     tests/BLI_multi_value_map_test.cc
     tests/BLI_normalized_int_test.cc
     tests/BLI_offset_indices_test.cc

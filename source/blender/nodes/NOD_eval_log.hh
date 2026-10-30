@@ -47,7 +47,7 @@
 
 #include "NOD_geometry_nodes_closure_location.hh"
 #include "NOD_geometry_nodes_list_fwd.hh"
-#include "NOD_geometry_nodes_warning.hh"
+#include "NOD_warning.hh"
 
 #include "DNA_node_types.h"
 
@@ -57,6 +57,7 @@ struct SpaceNode;
 struct NodesModifierData;
 struct Report;
 struct ImBuf;
+struct bContext;
 
 namespace fn {
 class GField;
@@ -65,21 +66,6 @@ class GField;
 namespace nodes::eval_log {
 
 using fn::GField;
-
-struct NodeWarning {
-  NodeWarningType type;
-  std::string message;
-
-  NodeWarning(NodeWarningType type, StringRef message) : type(type), message(message) {}
-  NodeWarning(const Report &report);
-
-  uint64_t hash() const
-  {
-    return get_default_hash(this->type, this->message);
-  }
-
-  friend bool operator==(const NodeWarning &a, const NodeWarning &b) = default;
-};
 
 enum class NamedAttributeUsage {
   None = 0,
@@ -281,6 +267,7 @@ class ImageInfoLog : public ValueLog {
   const int2 data_size;
   const int2 display_size;
   const int2 data_offset;
+  const float2 pixel_size;
   const float3x3 transformation;
 
   /* Stores compositor::RealizationOptions information in a textual representation. */
@@ -294,6 +281,7 @@ class ImageInfoLog : public ValueLog {
   ImageInfoLog(int2 data_size,
                int2 display_size,
                int2 data_offset,
+               float2 pixel_size,
                float3x3 transformation,
                StringRefNull interpolation,
                StringRefNull extension_x,
@@ -550,7 +538,7 @@ class NodesEvalLog {
   get_context_hash_by_zone_for_node_editor(const SpaceNode &snode,
                                            bke::ComputeContextCache &compute_context_cache);
 
-  static ContextualNodeTreeLogs get_contextual_tree_logs(const SpaceNode &snode);
+  static ContextualNodeTreeLogs get_contextual_tree_logs(const bContext &C);
   static const ViewerNodeLog *find_viewer_node_log_for_path(const ViewerPath &viewer_path);
 };
 

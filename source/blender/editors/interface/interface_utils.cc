@@ -50,7 +50,9 @@
 
 namespace blender::ui {
 
-/*************************** RNA Utilities ******************************/
+/* -------------------------------------------------------------------- */
+/** \name RNA Utilities
+ * \{ */
 
 Button *uiDefAutoButR(Block *block,
                       PointerRNA *ptr,
@@ -394,7 +396,11 @@ void button_func_identity_compare_set(Button *but, ButtonIdentityCompareFunc cmp
   but->identity_cmp_func = cmp_fn;
 }
 
-/* *** RNA collection search menu *** */
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name RNA Collection Search Menu
+ * \{ */
 
 struct CollItemSearch {
   void *data;
@@ -486,7 +492,7 @@ void rna_collection_search_update_fn(
         }
 
         if (requires_exact_data_name) {
-          name = RNA_struct_name_get_alloc(&itemptr, name_buf, sizeof(name_buf), nullptr);
+          name = RNA_struct_name_get_alloc(&itemptr, name_buf, nullptr);
         }
         else {
           BKE_id_full_name_ui_prefix_get(name_buf, id, true, UI_SEP_CHAR, &name_prefix_offset);
@@ -497,8 +503,7 @@ void rna_collection_search_update_fn(
         }
       }
       else if (data->item_search_prop) {
-        name = RNA_property_string_get_alloc(
-            &itemptr, data->item_search_prop, name_buf, sizeof(name_buf), nullptr);
+        name = RNA_property_string_get_alloc(&itemptr, data->item_search_prop, name_buf, nullptr);
       }
       else if (itemptr.type == RNA_ActionSlot) {
         /* FIXME: This special case is fairly annoying.
@@ -510,7 +515,7 @@ void rna_collection_search_update_fn(
          * #RNA_property_ui_icon).
          */
         PropertyRNA *prop = RNA_struct_find_property(&itemptr, "name_display");
-        name = RNA_property_string_get_alloc(&itemptr, prop, name_buf, sizeof(name_buf), nullptr);
+        name = RNA_property_string_get_alloc(&itemptr, prop, name_buf, nullptr);
         /* Also show an icon for the data-block type that each slot is intended for. */
         animrig::Slot &slot = reinterpret_cast<ActionSlot *>(itemptr.data)->wrap();
         iconid = icon_from_idcode(slot.idtype);
@@ -520,7 +525,7 @@ void rna_collection_search_update_fn(
         }
       }
       else {
-        name = RNA_struct_name_get_alloc(&itemptr, name_buf, sizeof(name_buf), nullptr);
+        name = RNA_struct_name_get_alloc(&itemptr, name_buf, nullptr);
       }
 
       if (name) {
@@ -617,6 +622,12 @@ void rna_collection_search_update_fn(
   }
 }
 
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name ID & Report Type Icons/Colors
+ * \{ */
+
 int icon_from_id(const ID *id)
 {
   if (id == nullptr) {
@@ -709,7 +720,11 @@ int UI_text_colorid_from_report_type(int type)
   return TH_INFO_WARNING_TEXT;
 }
 
-/********************************** Misc **************************************/
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Miscellaneous Utilities
+ * \{ */
 
 int calc_float_precision(int prec, double value)
 {
@@ -763,7 +778,7 @@ int calc_float_precision(int prec, double value)
 
 std::optional<std::string> button_online_manual_id(const Button *but)
 {
-  if (but->rnapoin.data && but->rnaprop) {
+  if (but->rnapoin && but->rnaprop) {
     return fmt::format(
         "{}.{}", RNA_struct_identifier(but->rnapoin.type), RNA_property_identifier(but->rnaprop));
   }
@@ -778,14 +793,17 @@ std::optional<std::string> button_online_manual_id(const Button *but)
 
 std::optional<std::string> button_online_manual_id_from_active(const bContext *C)
 {
-  if (Button *but = context_active_but_get(C)) {
+  if (Button *but = context_active_but_get_respect_popup(C)) {
     return button_online_manual_id(but);
   }
   return std::nullopt;
 }
 
-/* -------------------------------------------------------------------- */
+/** \} */
 
+/* -------------------------------------------------------------------- */
+/** \name Button Ensure In View
+ * \{ */
 static rctf but_rect_to_view(const Button *but, const ARegion *region, const View2D *v2d)
 {
   rctf region_rect;
@@ -865,6 +883,8 @@ void but_ensure_in_view(const bContext *C, ARegion *region, const Button *but)
     ED_region_tag_redraw_no_rebuild(region);
   }
 }
+
+/** \} */
 
 /* -------------------------------------------------------------------- */
 /** \name Button Store
@@ -991,12 +1011,12 @@ void butstore_update(Block *block)
 {
   /* move this list to the new block */
   if (block->oldblock) {
-    if (block->oldblock->butstore.first) {
+    if (block->oldblock->butstore.first_) {
       BLI_movelisttolist(&block->butstore, &block->oldblock->butstore);
     }
   }
 
-  if (block->butstore.first == nullptr) [[likely]] {
+  if (block->butstore.first_ == nullptr) [[likely]] {
     return;
   }
 

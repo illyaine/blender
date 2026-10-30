@@ -44,7 +44,7 @@ void FinalEngine::render()
   int width = image_res[0] * border[2];
   int height = image_res[1] * border[3];
 
-  pxr::GfCamera camera = gf_camera(scene_->camera, image_res, border);
+  pxr::GfCamera camera = gf_camera(camera_object(), image_res, border);
 
   free_camera_delegate_->SetCamera(camera);
   render_task_delegate_->set_viewport(pxr::GfVec4d(0, 0, width, height));
@@ -53,7 +53,7 @@ void FinalEngine::render()
   }
 
   RenderResult *rr = RE_engine_get_result(bl_engine_);
-  RenderLayer *rlayer = static_cast<RenderLayer *>(rr->layers.first);
+  RenderLayer *rlayer = rr->layers.first();
   for (RenderPass &rpass : rlayer->passes) {
     pxr::TfToken *aov_token = aov_tokens_.lookup_ptr(rpass.name);
     if (!aov_token) {
@@ -84,8 +84,7 @@ void FinalEngine::render()
     }
 
     percent_done = renderer_percent_done();
-    BLI_timecode_string_from_time_simple(
-        elapsed_time, sizeof(elapsed_time), BLI_time_now_seconds() - time_begin);
+    BLI_timecode_string_from_time_simple(elapsed_time, BLI_time_now_seconds() - time_begin);
     notify_status(percent_done / 100.0,
                   std::string(scene_name) + ": " + view_layer->name,
                   std::string("Render Time: ") + elapsed_time +
@@ -100,6 +99,14 @@ void FinalEngine::render()
 
   update_render_result(width, height, view_layer->name);
   render_task_delegate_->unbind();
+}
+
+const Object *FinalEngine::camera_object() const
+{
+  if (bl_engine_->camera_override) {
+    return DEG_get_evaluated(depsgraph_, bl_engine_->camera_override);
+  }
+  return scene_->camera;
 }
 
 void FinalEngine::set_render_setting(const std::string &key, const pxr::VtValue &val)

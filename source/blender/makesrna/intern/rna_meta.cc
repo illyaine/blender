@@ -10,6 +10,8 @@
 
 #include "DNA_meta_types.h"
 
+#include "BLT_translation.hh"
+
 #include "RNA_define.hh"
 #include "RNA_enum_types.hh"
 
@@ -246,6 +248,7 @@ static void rna_def_metaelement(BlenderRNA *brna)
   RNA_def_property_float_sdna(prop, nullptr, "s");
   RNA_def_property_range(prop, 0.0f, 10.0f);
   RNA_def_property_ui_text(prop, "Stiffness", "Stiffness defines how much of the element to fill");
+  RNA_def_property_translation_context(prop, BLT_I18NCONTEXT_ID_METABALL);
   RNA_def_property_update(prop, 0, "rna_MetaBall_update_data");
 
   /* flags */
@@ -293,6 +296,7 @@ static void rna_def_metaball_elements(BlenderRNA *brna, PropertyRNA *cprop)
                "",
                "Type for the new metaball element");
   parm = RNA_def_pointer(func, "element", "MetaElement", "", "The newly created metaball element");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, ParameterFlag(0));
   RNA_def_function_return(func, parm);
 
   func = RNA_def_function(srna, "remove", "rna_MetaBall_elements_remove");

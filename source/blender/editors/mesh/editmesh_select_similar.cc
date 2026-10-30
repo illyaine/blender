@@ -6,10 +6,12 @@
  * \ingroup edmesh
  */
 
+#include <optional>
+
 #include "MEM_guardedalloc.h"
 
 #include "BLI_bitmap.hh"
-#include "BLI_kdtree.hh"
+#include "BLI_kdtree_new.hh"
 #include "BLI_listbase.hh"
 #include "BLI_math_geom_c.hh"
 #include "BLI_math_matrix_c.hh"
@@ -166,8 +168,8 @@ static wmOperatorStatus similar_face_select_exec(bContext *C, wmOperator *op)
 
   bool any_face_selected = false;
   for (Object *ob : objects) {
-    BMEditMesh *em = BKE_editmesh_from_object(ob);
-    if (em->bm->totfacesel == 0) {
+    const BMesh *bm = BKE_editmesh_bmesh_get(ob);
+    if (bm->totfacesel == 0) {
       continue;
     }
     any_face_selected = true;
@@ -183,9 +185,12 @@ static wmOperatorStatus similar_face_select_exec(bContext *C, wmOperator *op)
   Map<float3, int> points_3d;
   Map<float4, int> points_4d;
 
-  KDTree<float> *tree_1d = nullptr;
-  KDTree<float3> *tree_3d = nullptr;
-  KDTree<float4> *tree_4d = nullptr;
+  Vector<float> tree_1d_points;
+  std::optional<KDTree<float>> tree_1d;
+  Vector<float3> tree_3d_points;
+  std::optional<KDTree<float3>> tree_3d;
+  Vector<float4> tree_4d_points;
+  std::optional<KDTree<float4>> tree_4d;
 
   Set<int> sides_set;
   Set<const Material *> materials_set;
@@ -193,8 +198,7 @@ static wmOperatorStatus similar_face_select_exec(bContext *C, wmOperator *op)
 
   int tree_index = 0;
   for (Object *ob : objects) {
-    BMEditMesh *em = BKE_editmesh_from_object(ob);
-    BMesh *bm = em->bm;
+    BMesh *bm = BKE_editmesh_bmesh_get_for_write(ob);
     Material ***material_array = nullptr;
     invert_m4_m4(ob->runtime->world_to_object.ptr(), ob->object_to_world().ptr());
 
@@ -293,27 +297,18 @@ static wmOperatorStatus similar_face_select_exec(bContext *C, wmOperator *op)
   switch (type) {
     case SIMFACE_AREA:
     case SIMFACE_PERIMETER: {
-      tree_1d = kdtree_new<float>(points_1d.size());
-      for (const auto &[pos, index] : points_1d.items()) {
-        kdtree_insert(tree_1d, index, pos);
-      }
-      kdtree_balance<float>(tree_1d);
+      tree_1d_points = Vector<float>(points_1d.keys().begin(), points_1d.keys().end());
+      tree_1d.emplace(tree_1d_points);
       break;
     }
     case SIMFACE_NORMAL: {
-      tree_3d = kdtree_new<float3>(points_3d.size());
-      for (const auto &[pos, index] : points_3d.items()) {
-        kdtree_insert(tree_3d, index, pos);
-      }
-      kdtree_balance<float3>(tree_3d);
+      tree_3d_points = Vector<float3>(points_3d.keys().begin(), points_3d.keys().end());
+      tree_3d.emplace(tree_3d_points);
       break;
     }
     case SIMFACE_COPLANAR: {
-      tree_4d = kdtree_new<float4>(points_4d.size());
-      for (const auto &[pos, index] : points_4d.items()) {
-        kdtree_insert(tree_4d, index, pos);
-      }
-      kdtree_balance<float4>(tree_4d);
+      tree_4d_points = Vector<float4>(points_4d.keys().begin(), points_4d.keys().end());
+      tree_4d.emplace(tree_4d_points);
       break;
     }
     case SIMFACE_SIDES:
@@ -323,7 +318,7 @@ static wmOperatorStatus similar_face_select_exec(bContext *C, wmOperator *op)
 
   for (Object *ob : objects) {
     BMEditMesh *em = BKE_editmesh_from_object(ob);
-    BMesh *bm = em->bm;
+    BMesh *bm = BKE_editmesh_bmesh_get_for_write(ob);
     bool changed = false;
     Material ***material_array = nullptr;
 
@@ -379,7 +374,7 @@ static wmOperatorStatus similar_face_select_exec(bContext *C, wmOperator *op)
           }
           case SIMFACE_AREA: {
             float area = BM_face_calc_area_with_mat3(face, ob_m3);
-            if (ED_select_similar_compare_float_tree(tree_1d, area, thresh, eSimilarCmp(compare)))
+            if (ED_select_similar_compare_float_tree(*tree_1d, area, thresh, eSimilarCmp(compare)))
             {
               select = true;
             }
@@ -388,7 +383,7 @@ static wmOperatorStatus similar_face_select_exec(bContext *C, wmOperator *op)
           case SIMFACE_PERIMETER: {
             float perimeter = BM_face_calc_perimeter_with_mat3(face, ob_m3);
             if (ED_select_similar_compare_float_tree(
-                    tree_1d, perimeter, thresh, eSimilarCmp(compare)))
+                    *tree_1d, perimeter, thresh, eSimilarCmp(compare)))
             {
               select = true;
             }
@@ -402,9 +397,9 @@ static wmOperatorStatus similar_face_select_exec(bContext *C, wmOperator *op)
 
             /* We are treating the normals as coordinates, the "nearest" one will
              * also be the one closest to the angle. */
-            KDTreeNearest<float3> nearest;
-            if (kdtree_find_nearest<float3>(tree_3d, normal, &nearest) != -1) {
-              if (angle_normalized_v3v3(normal, nearest.co) <= thresh_radians) {
+            const int nearest = tree_3d->find_nearest(normal);
+            if (nearest != -1) {
+              if (angle_normalized_v3v3(normal, tree_3d->points()[nearest]) <= thresh_radians) {
                 select = true;
               }
             }
@@ -414,11 +409,13 @@ static wmOperatorStatus similar_face_select_exec(bContext *C, wmOperator *op)
             float plane[4];
             face_to_plane(ob, face, plane);
 
-            KDTreeNearest<float4> nearest;
-            if (kdtree_find_nearest<float4>(tree_4d, plane, &nearest) != -1) {
-              if (nearest.dist <= thresh) {
-                if ((fabsf(plane[3] - nearest.co[3]) <= thresh) &&
-                    (angle_v3v3(plane, nearest.co) <= thresh_radians))
+            float distance_sq;
+            const int nearest = tree_4d->find_nearest(float4(plane), &distance_sq);
+            if (nearest != -1) {
+              const float4 &nearest_plane = tree_4d->points()[nearest];
+              if (distance_sq <= math::square(thresh)) {
+                if ((fabsf(plane[3] - nearest_plane[3]) <= thresh) &&
+                    (angle_v3v3(plane, nearest_plane) <= thresh_radians))
                 {
                   select = true;
                 }
@@ -457,8 +454,8 @@ static wmOperatorStatus similar_face_select_exec(bContext *C, wmOperator *op)
     }
 
     if (changed) {
-      EDBM_selectmode_flush(em);
-      EDBM_uvselect_clear(em);
+      EDBM_selectmode_flush(bm, em->selectmode);
+      EDBM_uvselect_clear(bm);
 
       EDBMUpdate_Params params{};
       params.calc_looptris = false;
@@ -474,7 +471,7 @@ static wmOperatorStatus similar_face_select_exec(bContext *C, wmOperator *op)
 
     for (Object *ob : objects) {
       BMEditMesh *em = BKE_editmesh_from_object(ob);
-      BMesh *bm = em->bm;
+      BMesh *bm = BKE_editmesh_bmesh_get_for_write(ob);
 
       BMFace *face; /* Mesh face. */
       BMIter iter;  /* Selected faces iterator. */
@@ -484,8 +481,8 @@ static wmOperatorStatus similar_face_select_exec(bContext *C, wmOperator *op)
           BM_face_select_set(bm, face, true);
         }
       }
-      EDBM_selectmode_flush(em);
-      EDBM_uvselect_clear(em);
+      EDBM_selectmode_flush(bm, em->selectmode);
+      EDBM_uvselect_clear(bm);
 
       EDBMUpdate_Params params{};
       params.calc_looptris = false;
@@ -494,10 +491,6 @@ static wmOperatorStatus similar_face_select_exec(bContext *C, wmOperator *op)
       EDBM_update(id_cast<Mesh *>(ob->data), &params);
     }
   }
-
-  kdtree_free<float>(tree_1d);
-  kdtree_free<float3>(tree_3d);
-  kdtree_free<float4>(tree_4d);
 
   return OPERATOR_FINISHED;
 }
@@ -574,8 +567,8 @@ static wmOperatorStatus similar_edge_select_exec(bContext *C, wmOperator *op)
 
   bool any_edge_selected = false;
   for (Object *ob : objects) {
-    BMEditMesh *em = BKE_editmesh_from_object(ob);
-    if (em->bm->totedgesel == 0) {
+    const BMesh *bm = BKE_editmesh_bmesh_get(ob);
+    if (bm->totedgesel == 0) {
       continue;
     }
     any_edge_selected = true;
@@ -590,16 +583,16 @@ static wmOperatorStatus similar_edge_select_exec(bContext *C, wmOperator *op)
   Map<float, int> points_1d;
   Map<float3, int> points_3d;
 
-  KDTree<float> *tree_1d = nullptr;
-  KDTree<float3> *tree_3d = nullptr;
+  Vector<float> tree_1d_points;
+  std::optional<KDTree<float>> tree_1d;
+  Vector<float3> tree_3d_points;
+  std::optional<KDTree<float3>> tree_3d;
   Set<int> face_count_set;
   int edge_data_value = SIMEDGE_DATA_NONE;
 
   int tree_index = 0;
   for (Object *ob : objects) {
-    BMEditMesh *em = BKE_editmesh_from_object(ob);
-    BMesh *bm = em->bm;
-
+    BMesh *bm = BKE_editmesh_bmesh_get_for_write(ob);
     if (bm->totedgesel == 0) {
       continue;
     }
@@ -719,19 +712,13 @@ static wmOperatorStatus similar_edge_select_exec(bContext *C, wmOperator *op)
     case SIMEDGE_BEVEL:
     case SIMEDGE_FACE_ANGLE:
     case SIMEDGE_LENGTH: {
-      tree_1d = kdtree_new<float>(points_1d.size());
-      for (const auto &[pos, index] : points_1d.items()) {
-        kdtree_insert(tree_1d, index, pos);
-      }
-      kdtree_balance<float>(tree_1d);
+      tree_1d_points = Vector<float>(points_1d.keys().begin(), points_1d.keys().end());
+      tree_1d.emplace(tree_1d_points);
       break;
     }
     case SIMEDGE_DIR: {
-      tree_3d = kdtree_new<float3>(points_3d.size());
-      for (const auto &[pos, index] : points_3d.items()) {
-        kdtree_insert(tree_3d, index, pos);
-      }
-      kdtree_balance<float3>(tree_3d);
+      tree_3d_points = Vector<float3>(points_3d.keys().begin(), points_3d.keys().end());
+      tree_3d.emplace(tree_3d_points);
       break;
     }
     case SIMEDGE_FACE:
@@ -740,7 +727,7 @@ static wmOperatorStatus similar_edge_select_exec(bContext *C, wmOperator *op)
 
   for (Object *ob : objects) {
     BMEditMesh *em = BKE_editmesh_from_object(ob);
-    BMesh *bm = em->bm;
+    BMesh *bm = BKE_editmesh_bmesh_get_for_write(ob);
     bool changed = false;
 
     bool has_custom_data_layer = false;
@@ -760,7 +747,8 @@ static wmOperatorStatus similar_edge_select_exec(bContext *C, wmOperator *op)
           /* Proceed only if we have to select all the edges that have custom data value of 0.0f.
            * In this case we will just select all the edges.
            * Otherwise continue the for loop. */
-          if (!ED_select_similar_compare_float_tree(tree_1d, 0.0f, thresh, eSimilarCmp(compare))) {
+          if (!ED_select_similar_compare_float_tree(*tree_1d, 0.0f, thresh, eSimilarCmp(compare)))
+          {
             continue;
           }
         }
@@ -773,7 +761,8 @@ static wmOperatorStatus similar_edge_select_exec(bContext *C, wmOperator *op)
           /* Proceed only if we have to select all the edges that have custom data value of 0.0f.
            * In this case we will just select all the edges.
            * Otherwise continue the for loop. */
-          if (!ED_select_similar_compare_float_tree(tree_1d, 0.0f, thresh, eSimilarCmp(compare))) {
+          if (!ED_select_similar_compare_float_tree(*tree_1d, 0.0f, thresh, eSimilarCmp(compare)))
+          {
             continue;
           }
         }
@@ -824,9 +813,9 @@ static wmOperatorStatus similar_edge_select_exec(bContext *C, wmOperator *op)
 
             /* We are treating the direction as coordinates, the "nearest" one will
              * also be the one closest to the intended direction. */
-            KDTreeNearest<float3> nearest;
-            if (kdtree_find_nearest<float3>(tree_3d, dir, &nearest) != -1) {
-              if (angle_normalized_v3v3(dir, nearest.co) <= thresh_radians) {
+            const int nearest = tree_3d->find_nearest(dir);
+            if (nearest != -1) {
+              if (angle_normalized_v3v3(dir, tree_3d->points()[nearest]) <= thresh_radians) {
                 select = true;
               }
             }
@@ -835,7 +824,7 @@ static wmOperatorStatus similar_edge_select_exec(bContext *C, wmOperator *op)
           case SIMEDGE_LENGTH: {
             float length = edge_length_squared_worldspace_get(ob, edge);
             if (ED_select_similar_compare_float_tree(
-                    tree_1d, length, thresh, eSimilarCmp(compare)))
+                    *tree_1d, length, thresh, eSimilarCmp(compare)))
             {
               select = true;
             }
@@ -844,7 +833,7 @@ static wmOperatorStatus similar_edge_select_exec(bContext *C, wmOperator *op)
           case SIMEDGE_FACE_ANGLE: {
             if (BM_edge_face_count_at_most(edge, 2) == 2) {
               float angle = BM_edge_calc_face_angle_with_imat3(edge, ob_m3_inv);
-              if (ED_select_similar_compare_float_tree(tree_1d, angle, thresh, SIM_CMP_EQ)) {
+              if (ED_select_similar_compare_float_tree(*tree_1d, angle, thresh, SIM_CMP_EQ)) {
                 select = true;
               }
             }
@@ -886,7 +875,7 @@ static wmOperatorStatus similar_edge_select_exec(bContext *C, wmOperator *op)
 
             const float *value = BM_ELEM_CD_GET_FLOAT_P(edge, custom_data_offset);
             if (ED_select_similar_compare_float_tree(
-                    tree_1d, *value, thresh, eSimilarCmp(compare)))
+                    *tree_1d, *value, thresh, eSimilarCmp(compare)))
             {
               select = true;
             }
@@ -902,8 +891,8 @@ static wmOperatorStatus similar_edge_select_exec(bContext *C, wmOperator *op)
     }
 
     if (changed) {
-      EDBM_selectmode_flush(em);
-      EDBM_uvselect_clear(em);
+      EDBM_selectmode_flush(bm, em->selectmode);
+      EDBM_uvselect_clear(bm);
 
       EDBMUpdate_Params params{};
       params.calc_looptris = false;
@@ -919,7 +908,7 @@ static wmOperatorStatus similar_edge_select_exec(bContext *C, wmOperator *op)
 
     for (Object *ob : objects) {
       BMEditMesh *em = BKE_editmesh_from_object(ob);
-      BMesh *bm = em->bm;
+      BMesh *bm = BKE_editmesh_bmesh_get_for_write(ob);
 
       BMEdge *edge; /* Mesh edge. */
       BMIter iter;  /* Selected edges iterator. */
@@ -929,8 +918,8 @@ static wmOperatorStatus similar_edge_select_exec(bContext *C, wmOperator *op)
           BM_edge_select_set(bm, edge, true);
         }
       }
-      EDBM_selectmode_flush(em);
-      EDBM_uvselect_clear(em);
+      EDBM_selectmode_flush(bm, em->selectmode);
+      EDBM_uvselect_clear(bm);
 
       EDBMUpdate_Params params{};
       params.calc_looptris = false;
@@ -939,9 +928,6 @@ static wmOperatorStatus similar_edge_select_exec(bContext *C, wmOperator *op)
       EDBM_update(id_cast<Mesh *>(ob->data), &params);
     }
   }
-
-  kdtree_free<float>(tree_1d);
-  kdtree_free<float3>(tree_3d);
 
   return OPERATOR_FINISHED;
 }
@@ -969,8 +955,8 @@ static wmOperatorStatus similar_vert_select_exec(bContext *C, wmOperator *op)
 
   bool any_vert_selected = false;
   for (Object *ob : objects) {
-    BMEditMesh *em = BKE_editmesh_from_object(ob);
-    if (em->bm->totvertsel == 0) {
+    const BMesh *bm = BKE_editmesh_bmesh_get(ob);
+    if (bm->totvertsel == 0) {
       continue;
     }
     any_vert_selected = true;
@@ -985,16 +971,17 @@ static wmOperatorStatus similar_vert_select_exec(bContext *C, wmOperator *op)
   Map<float, int> points_1d;
   Map<float3, int> points_3d;
 
-  KDTree<float3> *tree_3d = nullptr;
-  KDTree<float> *tree_1d = nullptr;
+  Vector<float3> tree_3d_points;
+  std::optional<KDTree<float3>> tree_3d;
+  Vector<float> tree_1d_points;
+  std::optional<KDTree<float>> tree_1d;
   Set<StringRef> selected_vertex_groups;
   Set<int> connected_elems_num_set;
 
   int normal_tree_index = 0;
   int tree_1d_index = 0;
   for (Object *ob : objects) {
-    BMEditMesh *em = BKE_editmesh_from_object(ob);
-    BMesh *bm = em->bm;
+    BMesh *bm = BKE_editmesh_bmesh_get_for_write(ob);
     int cd_dvert_offset = -1;
     int cd_crease_offset = -1;
     BLI_bitmap *defbase_selected = nullptr;
@@ -1094,19 +1081,13 @@ static wmOperatorStatus similar_vert_select_exec(bContext *C, wmOperator *op)
 
   switch (type) {
     case SIMVERT_NORMAL: {
-      tree_3d = kdtree_new<float3>(points_3d.size());
-      for (const auto &[pos, index] : points_3d.items()) {
-        kdtree_insert(tree_3d, index, pos);
-      }
-      kdtree_balance<float3>(tree_3d);
+      tree_3d_points = Vector<float3>(points_3d.keys().begin(), points_3d.keys().end());
+      tree_3d.emplace(tree_3d_points);
       break;
     }
     case SIMVERT_CREASE: {
-      tree_1d = kdtree_new<float>(points_1d.size());
-      for (const auto &[pos, index] : points_1d.items()) {
-        kdtree_insert(tree_1d, index, pos);
-      }
-      kdtree_balance<float>(tree_1d);
+      tree_1d_points = Vector<float>(points_1d.keys().begin(), points_1d.keys().end());
+      tree_1d.emplace(tree_1d_points);
       break;
     }
     case SIMVERT_EDGE:
@@ -1118,7 +1099,7 @@ static wmOperatorStatus similar_vert_select_exec(bContext *C, wmOperator *op)
   /* Run the matching operations. */
   for (Object *ob : objects) {
     BMEditMesh *em = BKE_editmesh_from_object(ob);
-    BMesh *bm = em->bm;
+    BMesh *bm = BKE_editmesh_bmesh_get_for_write(ob);
     bool changed = false;
     bool has_crease_layer = false;
     int cd_dvert_offset = -1;
@@ -1161,7 +1142,7 @@ static wmOperatorStatus similar_vert_select_exec(bContext *C, wmOperator *op)
         /* Proceed only if we have to select all the vertices that have custom data value of 0.0f.
          * In this case we will just select all the vertices.
          * Otherwise continue the for loop. */
-        if (!ED_select_similar_compare_float_tree(tree_1d, 0.0f, thresh, eSimilarCmp(compare))) {
+        if (!ED_select_similar_compare_float_tree(*tree_1d, 0.0f, thresh, eSimilarCmp(compare))) {
           continue;
         }
       }
@@ -1204,9 +1185,9 @@ static wmOperatorStatus similar_vert_select_exec(bContext *C, wmOperator *op)
 
             /* We are treating the normals as coordinates, the "nearest" one will
              * also be the one closest to the angle. */
-            KDTreeNearest<float3> nearest;
-            if (kdtree_find_nearest<float3>(tree_3d, normal, &nearest) != -1) {
-              if (angle_normalized_v3v3(normal, nearest.co) <= thresh_radians) {
+            const int nearest = tree_3d->find_nearest(normal);
+            if (nearest != -1) {
+              if (angle_normalized_v3v3(normal, tree_3d->points()[nearest]) <= thresh_radians) {
                 select = true;
               }
             }
@@ -1236,7 +1217,7 @@ static wmOperatorStatus similar_vert_select_exec(bContext *C, wmOperator *op)
             }
             const float *value = BM_ELEM_CD_GET_FLOAT_P(vert, cd_crease_offset);
             if (ED_select_similar_compare_float_tree(
-                    tree_1d, *value, thresh, eSimilarCmp(compare)))
+                    *tree_1d, *value, thresh, eSimilarCmp(compare)))
             {
               select = true;
             }
@@ -1256,7 +1237,7 @@ static wmOperatorStatus similar_vert_select_exec(bContext *C, wmOperator *op)
     }
 
     if (changed) {
-      EDBM_selectmode_flush(em);
+      EDBM_selectmode_flush(bm, em->selectmode);
       EDBMUpdate_Params params{};
       params.calc_looptris = false;
       params.calc_normals = false;
@@ -1264,9 +1245,6 @@ static wmOperatorStatus similar_vert_select_exec(bContext *C, wmOperator *op)
       EDBM_update(id_cast<Mesh *>(ob->data), &params);
     }
   }
-
-  kdtree_free<float>(tree_1d);
-  kdtree_free<float3>(tree_3d);
 
   return OPERATOR_FINISHED;
 }

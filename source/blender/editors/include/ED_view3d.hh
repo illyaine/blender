@@ -7,6 +7,7 @@
  */
 
 #pragma once
+#include <array>
 
 #include "BLI_bounds_types.hh"
 #include "BLI_enum_flags.hh"
@@ -66,9 +67,14 @@ namespace gpu {
 class Texture;
 }
 
-/** For mesh drawing callbacks, for viewport selection, etc. */
+/**
+ * For mesh drawing callbacks, for viewport selection, etc.
+ *
+ * \note #bContext is intentionally excluded from this struct to ensure the context's state doesn't
+ * leak into the functions intended to use these struct members. If the context is needed, it must
+ * be passed in separately.
+ */
 struct ViewContext {
-  bContext *C;
   Main *bmain;
   /* Dependency graph is uses for depth drawing, viewport camera matrix access, and also some areas
    * are re-using this to access evaluated entities.
@@ -82,6 +88,7 @@ struct ViewContext {
   ARegion *region;
   View3D *v3d;
   wmWindow *win;
+  wmWindowManager *wm;
   RegionView3D *rv3d;
   BMEditMesh *em;
   int mval[2];
@@ -844,20 +851,6 @@ bool ED_view3d_viewplane_get(const Depsgraph *depsgraph,
  */
 void ED_view3d_polygon_offset(const RegionView3D *rv3d, float dist);
 
-void ED_view3d_calc_camera_border(const Scene *scene,
-                                  const Depsgraph *depsgraph,
-                                  const ARegion *region,
-                                  const View3D *v3d,
-                                  const RegionView3D *rv3d,
-                                  bool no_shift,
-                                  bool no_roll,
-                                  rctf *r_viewborder);
-void ED_view3d_calc_camera_border_size(const Scene *scene,
-                                       Depsgraph *depsgraph,
-                                       const ARegion *region,
-                                       const View3D *v3d,
-                                       const RegionView3D *rv3d,
-                                       float r_size[2]);
 bool ED_view3d_calc_render_border(
     const Scene *scene, Depsgraph *depsgraph, View3D *v3d, ARegion *region, rcti *r_rect);
 
@@ -1195,6 +1188,19 @@ eRegionView3D_View ED_view3d_lock_view_from_index(int index);
 eRegionView3D_View ED_view3d_axis_view_opposite(eRegionView3D_View view);
 bool ED_view3d_lock(RegionView3D *rv3d);
 
+enum class eRegionView3D_ViewFlipRoll : int8_t {
+  Roll0,
+  Roll90,
+  Roll180,
+  Roll270,
+  RollOther,
+  FlipX,
+  FlipY,
+  FlipOther,
+};
+
+eRegionView3D_ViewFlipRoll ED_view3d_effective_flip_axis(const RegionView3D *rv3d);
+
 void ED_view3d_datamask(const Main &bmain,
                         const Scene *scene,
                         ViewLayer *view_layer,
@@ -1433,6 +1439,8 @@ void ED_view3d_gizmo_ruler_remove_by_gpencil_layer(struct bContext *C, bGPDlayer
 void ED_view3d_buttons_region_layout_ex(const bContext *C,
                                         ARegion *region,
                                         const char *category_override);
+
+std::array<const char *, 4> ED_view3d_buttons_contexts(const bContext *C);
 
 /* `view3d_view.cc` */
 

@@ -97,7 +97,7 @@ static void rna_LayerObjects_active_object_set(PointerRNA *ptr,
 {
   const Scene *scene = id_cast<Scene *>(ptr->owner_id);
   ViewLayer *view_layer = static_cast<ViewLayer *>(ptr->data);
-  if (value.data) {
+  if (value) {
     Object *ob = static_cast<Object *>(value.data);
     /* FIXME Using G_MAIN is very weak here, and may cause random issues when handling data not in
      * the G_MAIN, though in practice this is _probably_ not a very likely issue for now. */
@@ -119,21 +119,19 @@ static void rna_LayerObjects_active_object_set(PointerRNA *ptr,
   }
 }
 
-size_t rna_ViewLayer_path_buffer_get(const ViewLayer *view_layer,
-                                     char *r_rna_path,
-                                     const size_t rna_path_buffer_size)
+size_t rna_ViewLayer_path_buffer_get(const ViewLayer *view_layer, MutableCStr r_rna_path)
 {
   char name_esc[sizeof(view_layer->name) * 2];
-  BLI_str_escape(name_esc, view_layer->name, sizeof(name_esc));
+  BLI_str_escape(name_esc, view_layer->name);
 
-  return BLI_snprintf_rlen(r_rna_path, rna_path_buffer_size, "view_layers[\"%s\"]", name_esc);
+  return SNPRINTF_RLEN(r_rna_path, "view_layers[\"%s\"]", name_esc);
 }
 
 static std::optional<std::string> rna_ViewLayer_path(const PointerRNA *ptr)
 {
   const ViewLayer *view_layer = static_cast<ViewLayer *>(ptr->data);
   char rna_path[sizeof(view_layer->name) * 3];
-  rna_ViewLayer_path_buffer_get(view_layer, rna_path, sizeof(rna_path));
+  rna_ViewLayer_path_buffer_get(view_layer, rna_path);
   return rna_path;
 }
 
@@ -213,7 +211,7 @@ static PointerRNA rna_ViewLayer_depsgraph_get(PointerRNA *ptr)
     Depsgraph *depsgraph = BKE_scene_get_depsgraph(scene, view_layer);
     return RNA_pointer_create_with_parent(*ptr, RNA_Depsgraph, depsgraph);
   }
-  return PointerRNA_NULL;
+  return {};
 }
 
 static void rna_ViewLayer_remove_aov(ViewLayer *view_layer, ReportList *reports, ViewLayerAOV *aov)
@@ -651,7 +649,7 @@ void RNA_def_view_layer(BlenderRNA *brna)
 
   prop = RNA_def_property(srna, "layer_collection", PROP_POINTER, PROP_NONE);
   RNA_def_property_struct_type(prop, "LayerCollection");
-  RNA_def_property_pointer_sdna(prop, nullptr, "layer_collections.first");
+  RNA_def_property_pointer_sdna(prop, nullptr, "layer_collections.first_");
   RNA_def_property_flag(prop, PROP_NEVER_NULL);
   RNA_def_property_ui_text(
       prop,

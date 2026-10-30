@@ -38,6 +38,7 @@
 #include "BKE_idprop.hh"
 #include "BKE_main.hh"
 #include "BKE_node.hh"
+#include "BKE_preferences.h"
 #include "BKE_screen.hh"
 #include "BKE_studiolight.h"
 
@@ -153,23 +154,18 @@ const char *BKE_blender_version_string_compact()
   return blender_version_string_compact;
 }
 
-void BKE_blender_version_blendfile_string_from_values(char *str_buff,
-                                                      const size_t str_buff_maxncpy,
+void BKE_blender_version_blendfile_string_from_values(MutableCStr str_buff,
                                                       const short file_version,
                                                       const short file_subversion)
 {
   const short file_version_major = file_version / 100;
   const short file_version_minor = file_version % 100;
   if (file_subversion >= 0) {
-    BLI_snprintf_utf8(str_buff,
-                      str_buff_maxncpy,
-                      "%d.%d (sub %d)",
-                      file_version_major,
-                      file_version_minor,
-                      file_subversion);
+    SNPRINTF_UTF8(
+        str_buff, "%d.%d (sub %d)", file_version_major, file_version_minor, file_subversion);
   }
   else {
-    BLI_snprintf_utf8(str_buff, str_buff_maxncpy, "%d.%d", file_version_major, file_version_minor);
+    SNPRINTF_UTF8(str_buff, "%d.%d", file_version_major, file_version_minor);
   }
 }
 
@@ -194,14 +190,13 @@ void BKE_blender_globals_init()
 {
   blender_version_init();
 
-  memset(&G, 0, sizeof(Global));
+  G = Global{};
 
   U.savetime = 1;
 
   BKE_blender_globals_main_replace(BKE_main_new());
 
   STRNCPY(G.filepath_last_image, "//");
-  G.filepath_last_blend[0] = '\0';
 
 #ifndef WITH_PYTHON_SECURITY /* default */
   G.f |= G_FLAG_SCRIPT_AUTOEXEC;
@@ -210,8 +205,6 @@ void BKE_blender_globals_init()
 #endif
 
   G.log.level = CLG_LEVEL_WARN;
-
-  G.profile_gpu = false;
 }
 
 void BKE_blender_globals_clear()
@@ -250,11 +243,12 @@ void BKE_blender_globals_crash_path_get(char filepath[FILE_MAX])
    * de-referencing. */
 
   if (!(G_MAIN && G_MAIN->filepath[0])) {
-    BLI_path_join(filepath, FILE_MAX, BKE_tempdir_base(), "blender.crash.txt");
+    BLI_path_join(MutableCStr(filepath, FILE_MAX), BKE_tempdir_base(), "blender.crash.txt");
   }
   else {
-    BLI_path_join(filepath, FILE_MAX, BKE_tempdir_base(), BLI_path_basename(G_MAIN->filepath));
-    BLI_path_extension_replace(filepath, FILE_MAX, ".crash.txt");
+    BLI_path_join(
+        MutableCStr(filepath, FILE_MAX), BKE_tempdir_base(), BLI_path_basename(G_MAIN->filepath));
+    BLI_path_extension_replace(MutableCStr(filepath, FILE_MAX), ".crash.txt");
   }
 }
 
@@ -293,9 +287,7 @@ void BKE_blender_userdef_data_set_and_free(UserDef *userdef)
 
 static void userdef_free_keymaps(UserDef *userdef)
 {
-  for (wmKeyMap *km = static_cast<wmKeyMap *>(userdef->user_keymaps.first), *km_next; km;
-       km = km_next)
-  {
+  for (wmKeyMap *km = userdef->user_keymaps.first(), *km_next; km; km = km_next) {
     km_next = km->next;
     for (wmKeyMapDiffItem &kmdi : km->diff_items) {
       if (kmdi.add_item) {
@@ -322,9 +314,7 @@ static void userdef_free_keymaps(UserDef *userdef)
 
 static void userdef_free_keyconfig_prefs(UserDef *userdef)
 {
-  for (wmKeyConfigPref *kpt = static_cast<wmKeyConfigPref *>(userdef->user_keyconfig_prefs.first),
-                       *kpt_next;
-       kpt;
+  for (wmKeyConfigPref *kpt = userdef->user_keyconfig_prefs.first(), *kpt_next; kpt;
        kpt = kpt_next)
   {
     kpt_next = kpt->next;
@@ -336,9 +326,7 @@ static void userdef_free_keyconfig_prefs(UserDef *userdef)
 
 static void userdef_free_user_menus(UserDef *userdef)
 {
-  for (bUserMenu *um = static_cast<bUserMenu *>(userdef->user_menus.first), *um_next; um;
-       um = um_next)
-  {
+  for (bUserMenu *um = userdef->user_menus.first(), *um_next; um; um = um_next) {
     um_next = um->next;
     BKE_blender_user_menu_item_free_list(&um->items);
     MEM_delete(um);
@@ -347,9 +335,7 @@ static void userdef_free_user_menus(UserDef *userdef)
 
 static void userdef_free_addons(UserDef *userdef)
 {
-  for (bAddon *addon = static_cast<bAddon *>(userdef->addons.first), *addon_next; addon;
-       addon = addon_next)
-  {
+  for (bAddon *addon = userdef->addons.first(), *addon_next; addon; addon = addon_next) {
     addon_next = addon->next;
     BKE_addon_free(addon);
   }
@@ -377,7 +363,10 @@ void BKE_blender_userdef_data_free(UserDef *userdef, bool clear_fonts)
 
   userdef->autoexec_paths.free_no_destruct();
   userdef->script_directories.free_no_destruct();
-  userdef->asset_libraries.free_no_destruct();
+
+  for (bUserAssetLibrary &library_ref : userdef->asset_libraries.items_mutable()) {
+    BKE_preferences_asset_library_remove(userdef, &library_ref);
+  }
 
   for (bUserExtensionRepo &repo_ref : userdef->extension_repos.items_mutable()) {
     MEM_SAFE_DELETE(repo_ref.access_token);

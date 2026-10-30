@@ -391,7 +391,7 @@ static void graph_panel_key_properties(const bContext *C, Panel *panel)
 
     /* get property that F-Curve affects, for some unit-conversion magic */
     PointerRNA id_ptr = RNA_id_pointer_create(ale->id);
-    if (RNA_path_resolve_property(&id_ptr, fcu->rna_path, &fcu_prop_ptr, &fcu_prop)) {
+    if (RNA_path_resolve_property(&id_ptr, fcu->rna_path_parsed(), &fcu_prop_ptr, &fcu_prop)) {
       /* determine the unit for this property */
       unit = RNA_SUBTYPE_UNIT(RNA_property_subtype(fcu_prop));
     }
@@ -487,7 +487,7 @@ static void graph_panel_key_properties(const bContext *C, Panel *panel)
                       0,
                       0,
                       0,
-                      "Type of left handle");
+                      TIP_("Type of left handle"));
       button_func_set(but, graphedit_activekey_handle_left_cb, fcu, bezt);
 
       uiItemL_respect_property_split(&col, IFACE_("Frame"), ICON_NONE);
@@ -542,7 +542,7 @@ static void graph_panel_key_properties(const bContext *C, Panel *panel)
                       0,
                       0,
                       0,
-                      "Type of right handle");
+                      TIP_("Type of right handle"));
       button_func_set(but, graphedit_activekey_handle_right_cb, fcu, bezt);
 
       uiItemL_respect_property_split(&col, IFACE_("Frame"), ICON_NONE);
@@ -580,7 +580,7 @@ static void graph_panel_key_properties(const bContext *C, Panel *panel)
     }
   }
   else {
-    if ((fcu->bezt == nullptr) && (fcu->modifiers.first)) {
+    if ((fcu->bezt == nullptr) && (fcu->modifiers.first_)) {
       /* modifiers only - so no keyframes to be active */
       layout.label(RPT_("F-Curve only has F-Modifiers"), ICON_NONE);
       layout.label(RPT_("See Modifiers panel below"), ICON_STATUS_INFO);
@@ -674,7 +674,7 @@ static void driver_dvar_invalid_name_query_cb(bContext *C, DriverVar *dvar)
                  ICON_STATUS_ERROR);
   }
   if (dvar->flag & DVAR_FLAG_INVALID_PY_KEYWORD) {
-    layout.label(RPT_("It cannot be a reserved keyword in Python"), ICON_STATUS_WARNING);
+    layout.label(RPT_("It cannot be a reserved keyword in Python"), ICON_STATUS_ERROR);
   }
 
   popup_menu_end(C, pup);
@@ -981,7 +981,7 @@ static void graph_draw_driver_settings_panel(ui::Layout &layout,
 
     if (driver->flag & DRIVER_FLAG_PYTHON_BLOCKED) {
       /* TODO: Add button to enable? */
-      error_col.label(RPT_("Python restricted for security"), ICON_STATUS_WARNING);
+      error_col.label(RPT_("Python restricted for security"), ICON_STATUS_ERROR);
       error_col.label(RPT_("Slow Python expression"), ICON_STATUS_INFO);
     }
     else if (driver->flag & DRIVER_FLAG_INVALID) {

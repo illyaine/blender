@@ -21,7 +21,9 @@
 #include "BLI_compiler_attrs.hh"
 #include "BLI_enum_flags.hh"
 #include "BLI_function_ref.hh"
+#include "BLI_span.hh"
 #include "BLI_string_ref.hh"
+#include "BLI_ustring.hh"
 
 namespace blender {
 
@@ -37,6 +39,21 @@ struct bContext;
 
 enum eID_OverrideLib_Op : short;
 
+/**
+ * \note Some functions perform multiple checks whose results are more
+ * accurately and informatively represented using an enum status.
+ */
+enum class eRNAStatus {
+  /** The operation completed successfully. */
+  Success = 0,
+  /** The specified index is outside the valid range. */
+  IndexOutOfRange,
+  /** The property cannot be edited. */
+  Immutable,
+  /** An unexpected property was encountered. */
+  Unsupported,
+};
+
 /* Types */
 BlenderRNA &RNA_blender_rna_get();
 
@@ -51,14 +68,14 @@ BlenderRNA &RNA_blender_rna_get();
  * There is also a way to get a pointer with the information about all structs.
  */
 
-PointerRNA RNA_main_pointer_create(Main *main);
+[[nodiscard]] PointerRNA RNA_main_pointer_create(Main *main);
 /**
  * Create a PointerRNA for an ID.
  *
  * \note By definition, currently these are always 'discrete' (have no ancestors). See
  * #PointerRNA::ancestors for details.
  */
-PointerRNA RNA_id_pointer_create(ID *id);
+[[nodiscard]] PointerRNA RNA_id_pointer_create(ID *id);
 /**
  * Create a 'discrete', isolated PointerRNA of some data. It won't have any ancestor information
  * available.
@@ -66,14 +83,16 @@ PointerRNA RNA_id_pointer_create(ID *id);
  * \param id: The owner ID, may be null, in which case the PointerRNA won't have any ownership
  * information at all.
  */
-PointerRNA RNA_pointer_create_discrete(ID *id, StructRNA *type, void *data);
+[[nodiscard]] PointerRNA RNA_pointer_create_discrete(ID *id, StructRNA *type, void *data);
 /**
  * Create a PointerRNA of some data, using the given `parent` as immediate ancestor.
  *
  * This allows the PointerRNA to know to which data it belongs, all the way up to the root owner
  * ID.
  */
-PointerRNA RNA_pointer_create_with_parent(const PointerRNA &parent, StructRNA *type, void *data);
+[[nodiscard]] PointerRNA RNA_pointer_create_with_parent(const PointerRNA &parent,
+                                                        StructRNA *type,
+                                                        void *data);
 /**
  * Create a PointerRNA of some data, with the given `id` data-block as single ancestor.
  *
@@ -83,7 +102,7 @@ PointerRNA RNA_pointer_create_with_parent(const PointerRNA &parent, StructRNA *t
  *    PointerRNA id_ptr = RNA_id_pointer_create(id);
  *    PointerRNA ptr = RNA_pointer_create_with_parent(id_ptr, RNA_Type, data);
  */
-PointerRNA RNA_pointer_create_id_subdata(ID &id, StructRNA *type, void *data);
+[[nodiscard]] PointerRNA RNA_pointer_create_id_subdata(ID &id, StructRNA *type, void *data);
 
 /**
  * Create a PointerRNA representing the N'th ancestor of the given PointerRNA, where `0` is the
@@ -93,17 +112,16 @@ PointerRNA RNA_pointer_create_id_subdata(ID &id, StructRNA *type, void *data);
  * ancestors have been created, only part of the ancestor chain may be available, see
  * #PointerRNA::ancestors for details.
  */
-PointerRNA RNA_pointer_create_from_ancestor(const PointerRNA &ptr, const int ancestor_idx);
-
-bool RNA_pointer_is_null(const PointerRNA *ptr);
+[[nodiscard]] PointerRNA RNA_pointer_create_from_ancestor(const PointerRNA &ptr,
+                                                          const int ancestor_idx);
 
 bool RNA_path_resolved_create(PointerRNA *ptr,
                               PropertyRNA *prop,
                               int prop_index,
                               PathResolvedRNA *r_anim_rna);
 
-PointerRNA RNA_blender_rna_pointer_create();
-PointerRNA RNA_pointer_recast(PointerRNA *ptr);
+[[nodiscard]] PointerRNA RNA_blender_rna_pointer_create();
+[[nodiscard]] PointerRNA RNA_pointer_recast(PointerRNA *ptr);
 
 /* Structs */
 
@@ -181,6 +199,17 @@ bool RNA_struct_in_public_namespace(const StructRNA *type);
 PropertyRNA *RNA_struct_find_property(PointerRNA *ptr, const char *identifier);
 
 /**
+ * Find a struct's RNA property by its identifier.
+ *
+ * This is equivalent to RNA_property_collection_lookup_string searching the "rna_properties"
+ * collection. Calling this function directly is more purposeful and more efficient because it can
+ * avoid UString construction.
+ *
+ * \warning Does not handle ["name"] style lookup.
+ */
+PropertyRNA *RNA_struct_find_property(PointerRNA *ptr, UString identifier);
+
+/**
  * Same as `RNA_struct_find_property` but returns `nullptr` if the property type is no same to
  * `property_type_check`.
  */
@@ -219,7 +248,7 @@ std::optional<AncestorPointerRNA> RNA_struct_search_closest_ancestor_by_type(
  * note this ignores parent classes so should be used with care.
  */
 const ListBaseT<PropertyRNA> *RNA_struct_type_properties(StructRNA *srna);
-PropertyRNA *RNA_struct_type_find_property_no_base(StructRNA *srna, const char *identifier);
+PropertyRNA *RNA_struct_type_find_property_no_base(StructRNA *srna, UString identifier);
 /**
  * \note #RNA_struct_find_property is a higher level alternative to this function
  * which takes a #PointerRNA instead of a #StructRNA.
@@ -229,11 +258,12 @@ PropertyRNA *RNA_struct_type_find_property(StructRNA *srna, const char *identifi
 FunctionRNA *RNA_struct_find_function(StructRNA *srna, const char *identifier);
 Span<std::unique_ptr<FunctionRNA>> RNA_struct_type_functions(StructRNA *srna);
 
-[[nodiscard]] char *RNA_struct_name_get_alloc_ex(
-    PointerRNA *ptr, char *fixedbuf, int fixedlen, int *r_len, PropertyRNA **r_nameprop);
+[[nodiscard]] char *RNA_struct_name_get_alloc_ex(PointerRNA *ptr,
+                                                 std::optional<MutableCStr> fixedbuf,
+                                                 int *r_len,
+                                                 PropertyRNA **r_nameprop);
 [[nodiscard]] char *RNA_struct_name_get_alloc(PointerRNA *ptr,
-                                              char *fixedbuf,
-                                              int fixedlen,
+                                              std::optional<MutableCStr> fixedbuf,
                                               int *r_len);
 
 /**
@@ -536,8 +566,7 @@ std::string RNA_property_string_get(PointerRNA *ptr, PropertyRNA *prop);
 void RNA_property_string_get(PointerRNA *ptr, PropertyRNA *prop, char *value);
 char *RNA_property_string_get_alloc(PointerRNA *ptr,
                                     PropertyRNA *prop,
-                                    char *fixedbuf,
-                                    int fixedlen,
+                                    std::optional<MutableCStr> fixedbuf,
                                     int *r_len) ATTR_WARN_UNUSED_RESULT;
 void RNA_property_string_set(PointerRNA *ptr, PropertyRNA *prop, const char *value);
 void RNA_property_string_set_bytes(PointerRNA *ptr, PropertyRNA *prop, const char *value, int len);
@@ -567,14 +596,10 @@ std::optional<std::string> RNA_property_string_path_filter(const bContext *C,
  * string, when a `get_transform` callback is defined).
  */
 int RNA_property_string_length(PointerRNA *ptr, PropertyRNA *prop);
-void RNA_property_string_get_default(PointerRNA *ptr,
-                                     PropertyRNA *prop,
-                                     char *value,
-                                     int value_maxncpy);
+void RNA_property_string_get_default(PointerRNA *ptr, PropertyRNA *prop, MutableCStr value);
 char *RNA_property_string_get_default_alloc(PointerRNA *ptr,
                                             PropertyRNA *prop,
-                                            char *fixedbuf,
-                                            int fixedlen,
+                                            std::optional<MutableCStr> fixedbuf,
                                             int *r_len) ATTR_WARN_UNUSED_RESULT;
 /**
  * \return the length without `\0` terminator.
@@ -696,7 +721,10 @@ void RNA_property_pointer_remove(PointerRNA *ptr, PropertyRNA *prop);
 void RNA_property_collection_add(PointerRNA *ptr, PropertyRNA *prop, PointerRNA *r_ptr);
 bool RNA_property_collection_remove(PointerRNA *ptr, PropertyRNA *prop, int key);
 void RNA_property_collection_clear(PointerRNA *ptr, PropertyRNA *prop);
-bool RNA_property_collection_move(PointerRNA *ptr, PropertyRNA *prop, int key, int pos);
+eRNAStatus RNA_property_collection_move(PointerRNA *ptr,
+                                        PropertyRNA *prop,
+                                        int src_index,
+                                        int dst_index);
 
 /* copy/reset */
 bool RNA_property_copy(Main *bmain,
@@ -757,8 +785,7 @@ void RNA_string_get(PointerRNA *ptr, const char *name, char *value);
 std::string RNA_string_get(PointerRNA *ptr, const char *name);
 char *RNA_string_get_alloc(PointerRNA *ptr,
                            const char *name,
-                           char *fixedbuf,
-                           int fixedlen,
+                           std::optional<MutableCStr> fixedbuf,
                            int *r_len) ATTR_WARN_UNUSED_RESULT;
 int RNA_string_length(PointerRNA *ptr, const char *name);
 void RNA_string_set(PointerRNA *ptr, const char *name, const char *value);

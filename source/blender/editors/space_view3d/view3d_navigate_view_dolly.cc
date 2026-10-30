@@ -8,6 +8,7 @@
 
 #include "BKE_context.hh"
 #include "BKE_report.hh"
+#include "BKE_view3d_runtime.hh"
 
 #include "BLI_math_vector_c.hh"
 
@@ -102,7 +103,7 @@ static void viewdolly_apply(ViewOpsData *vod, const int xy[2], const bool zoom_i
     view_dolly_to_vector_3d(vod->region, vod->init.ofs, vod->init.mousevec, zfac);
   }
 
-  if (RV3D_LOCK_FLAGS(vod->rv3d) & RV3D_BOXVIEW) {
+  if (bke::region_view3d_lock_flags_get(vod->rv3d) & RV3D_BOXVIEW) {
     view3d_boxview_sync(vod->area, vod->region);
   }
 
@@ -211,7 +212,7 @@ static wmOperatorStatus viewdolly_exec(bContext *C, wmOperator *op)
     normalize_v3(mousevec);
   }
 
-  v3d = static_cast<View3D *>(area->spacedata.first);
+  v3d = area->spacedata.first_as<View3D>();
   rv3d = static_cast<RegionView3D *>(region->regiondata);
 
   const bool use_cursor_init = RNA_boolean_get(op->ptr, "use_cursor_init");
@@ -224,7 +225,7 @@ static wmOperatorStatus viewdolly_exec(bContext *C, wmOperator *op)
 
   view_dolly_to_vector_3d(region, rv3d->ofs, mousevec, delta < 0 ? 1.8f : 0.2f);
 
-  if (RV3D_LOCK_FLAGS(rv3d) & RV3D_BOXVIEW) {
+  if (bke::region_view3d_lock_flags_get(rv3d) & RV3D_BOXVIEW) {
     view3d_boxview_sync(area, region);
   }
 

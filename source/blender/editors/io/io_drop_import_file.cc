@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup editor/io
+ */
+
 #include "BLI_path_utils.hh"
 #include "BLI_string.hh"
 
@@ -62,7 +66,7 @@ static void file_handler_import_operator_write_ptr(const bke::FileHandlerType *f
 
   PropertyRNA *directory_prop = RNA_struct_find_property_check(props, "directory", PROP_STRING);
   char dir[FILE_MAX];
-  BLI_path_split_dir_part(paths[0].c_str(), dir, sizeof(dir));
+  BLI_path_split_dir_part(paths[0].c_str(), dir);
   if (directory_prop) {
     RNA_property_string_set(&props, directory_prop, dir);
   }

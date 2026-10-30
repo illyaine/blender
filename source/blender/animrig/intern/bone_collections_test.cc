@@ -540,9 +540,9 @@ TEST_F(ArmatureBoneCollections, bones_assign_unassign)
   EXPECT_EQ(&bone1, static_cast<BoneCollectionMember *>(BLI_findlink(&bcoll->bones, 0))->bone);
   EXPECT_EQ(&bone2, static_cast<BoneCollectionMember *>(BLI_findlink(&bcoll->bones, 1))->bone);
 
-  EXPECT_EQ(bcoll, static_cast<BoneCollectionReference *>(bone1.runtime.collections.first)->bcoll)
+  EXPECT_EQ(bcoll, bone1.runtime.collections.first()->bcoll)
       << "expecting back-reference to collection in bone1 runtime data";
-  EXPECT_EQ(bcoll, static_cast<BoneCollectionReference *>(bone2.runtime.collections.first)->bcoll)
+  EXPECT_EQ(bcoll, bone2.runtime.collections.first()->bcoll)
       << "expecting back-reference to collection in bone2 runtime data";
 
   ANIM_armature_bonecoll_unassign(bcoll, &bone1);
@@ -640,7 +640,7 @@ TEST_F(ArmatureBoneCollections, bcoll_is_editable)
 
   /* Fake that the armature is linked from another blend file. */
   Library fake_lib = {};
-  arm.id.lib = &fake_lib;
+  bke::id::id_lib_set(arm.id, &fake_lib);
   EXPECT_FALSE(ANIM_armature_bonecoll_is_editable(&arm, bcoll1))
       << "Expecting local armature to not be editable";
 
@@ -653,7 +653,7 @@ TEST_F(ArmatureBoneCollections, bcoll_is_editable)
       << "Expecting linked armature override to not be editable";
 
   /* Fake that the armature is a local override. */
-  arm.id.lib = nullptr;
+  bke::id::id_lib_set(arm.id, nullptr);
   bcoll2->flags |= BONE_COLLECTION_OVERRIDE_LIBRARY_LOCAL;
   EXPECT_FALSE(ANIM_armature_bonecoll_is_editable(&arm, bcoll1))
       << "Expecting linked bone collection on local armature override to not be editable";

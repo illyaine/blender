@@ -36,6 +36,7 @@
 #include "BKE_mesh_types.hh"
 #include "BKE_mesh_wrapper.hh"
 #include "BKE_object.hh"
+#include "BKE_view3d_runtime.hh"
 
 CCL_NAMESPACE_BEGIN
 
@@ -86,12 +87,9 @@ static inline blender::Mesh *object_copy_mesh_data(const BObjectInfo &b_ob_info)
 
 int blender_attribute_name_split_type(ustring name, string *r_real_name);
 
-void python_thread_state_save(void **python_thread_state);
-void python_thread_state_restore(void **python_thread_state);
-
 static inline blender::Mesh *object_to_mesh(BObjectInfo &b_ob_info)
 {
-  blender::Mesh *mesh = (blender::GS(b_ob_info.object_data->name) == blender::ID_ME) ?
+  blender::Mesh *mesh = (b_ob_info.object_data->id_type() == blender::ID_ME) ?
                             blender::id_cast<blender::Mesh *>(b_ob_info.object_data) :
                             nullptr;
 
@@ -513,7 +511,7 @@ static inline string get_text_datablock_content(const blender::ID *id)
   if (id == nullptr) {
     return "";
   }
-  if (blender::GS(id->name) != blender::ID_TXT) {
+  if (id->id_type() != blender::ID_TXT) {
     return "";
   }
   const auto &text = *blender::id_cast<const blender::Text *>(id);
@@ -625,7 +623,7 @@ static inline blender::FluidDomainSettings *object_fluid_gas_domain_find(blender
 static blender::SubsurfModifierData *object_subdivision_modifier(blender::Object &b_ob,
                                                                  const bool preview)
 {
-  blender::ModifierData *md = static_cast<blender::ModifierData *>(b_ob.modifiers.last);
+  blender::ModifierData *md = b_ob.modifiers.last();
   if (!md) {
     return nullptr;
   }
@@ -785,7 +783,8 @@ static inline bool object_need_motion_attribute(BObjectInfo &b_ob_info, Scene *s
 
 static inline bool region_view3d_navigating_or_transforming(const blender::RegionView3D *b_rv3d)
 {
-  return b_rv3d && ((b_rv3d->rflag & (blender::RV3D_NAVIGATING | blender::RV3D_PAINTING)) ||
+  return b_rv3d && ((b_rv3d->runtime->tags &
+                     (blender::bke::RV3D_TAG_NAVIGATING | blender::bke::RV3D_TAG_PAINTING)) ||
                     (blender::G.moving & (blender::G_TRANSFORM_OBJ | blender::G_TRANSFORM_EDIT)));
 }
 

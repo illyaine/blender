@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup draw
+ */
+
 #pragma once
 
 #include "BLI_array.hh"
@@ -155,6 +159,7 @@ void draw_subdiv_cache_free(DRWSubdivCache &cache);
 
 void DRW_create_subdivision(Object &ob,
                             Mesh &mesh,
+                            const Scene &scene,
                             MeshBatchCache &batch_cache,
                             MeshBufferCache &mbc,
                             Span<IBOType> ibo_requests,

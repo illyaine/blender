@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup edsculpt
+ */
+
 #include "editors/sculpt_paint/mesh/brushes/brushes.hh"
 
 #include "DNA_brush_types.h"
@@ -62,7 +66,6 @@ static void calc_faces(const Depsgraph &depsgraph,
                        const MeshAttributeData &attribute_data,
                        const bke::pbvh::MeshNode &node,
                        Object &object,
-                       LocalData &tls,
                        const PositionDeformData &position_data)
 {
   SculptSession &ss = *object.runtime->sculpt_session;
@@ -71,6 +74,8 @@ static void calc_faces(const Depsgraph &depsgraph,
   const OrigPositionData orig_data = orig_position_data_get_mesh(object, node);
   const Span<int> verts = node.verts();
 
+  Array<float, bke::pbvh::MESH_LEAF_LIMIT> factors(verts.size());
+  Array<float, bke::pbvh::MESH_LEAF_LIMIT> distances(verts.size());
   calc_factors_common_from_orig_data_mesh(depsgraph,
                                           brush,
                                           object,
@@ -78,18 +83,14 @@ static void calc_faces(const Depsgraph &depsgraph,
                                           orig_data.positions,
                                           orig_data.normals,
                                           node,
-                                          tls.factors,
-                                          tls.distances);
+                                          factors,
+                                          distances);
 
-  scale_factors(tls.factors, angle);
+  scale_factors(factors, angle);
 
-  tls.translations.resize(verts.size());
-  const MutableSpan<float3> translations = tls.translations;
-  calc_translations(orig_data.positions,
-                    cache.sculpt_normal_symm,
-                    tls.factors,
-                    cache.location_symm,
-                    translations);
+  Array<float3, bke::pbvh::MESH_LEAF_LIMIT> translations(verts.size());
+  calc_translations(
+      orig_data.positions, cache.sculpt_normal_symm, factors, cache.location_symm, translations);
 
   clip_and_lock_translations(sd, ss, position_data.eval, verts, translations);
   position_data.deform(translations, verts);
@@ -112,6 +113,8 @@ static void calc_grids(const Depsgraph &depsgraph,
   const Span<int> grids = node.grids();
   const int grid_verts_num = grids.size() * key.grid_area;
 
+  tls.factors.resize(grid_verts_num);
+  tls.distances.resize(grid_verts_num);
   calc_factors_common_from_orig_data_grids(depsgraph,
                                            brush,
                                            object,
@@ -152,6 +155,8 @@ static void calc_bmesh(const Depsgraph &depsgraph,
   Array<float3> orig_normals(verts.size());
   orig_position_data_gather_bmesh(*ss.bm_log, verts, orig_positions, orig_normals);
 
+  tls.factors.resize(verts.size());
+  tls.distances.resize(verts.size());
   calc_factors_common_from_orig_data_bmesh(
       depsgraph, brush, object, orig_positions, orig_normals, node, tls.factors, tls.distances);
 
@@ -190,9 +195,8 @@ void do_rotate_brush(const Depsgraph &depsgraph,
       MutableSpan<bke::pbvh::MeshNode> nodes = pbvh.nodes<bke::pbvh::MeshNode>();
       node_mask.foreach_index(
           [&](const int i) {
-            LocalData &tls = all_tls.local();
             calc_faces(
-                depsgraph, sd, brush, angle, attribute_data, nodes[i], object, tls, position_data);
+                depsgraph, sd, brush, angle, attribute_data, nodes[i], object, position_data);
             bke::pbvh::update_node_bounds_mesh(position_data.eval, nodes[i]);
           },
           exec_mode::grain_size(1));

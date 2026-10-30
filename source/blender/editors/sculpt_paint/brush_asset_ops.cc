@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup edsculpt
+ */
+
 #include "BLI_fileops.hh"
 #include "BLI_listbase.hh"
 #include "BLI_path_utils.hh"
@@ -391,9 +395,9 @@ static wmOperatorStatus brush_asset_edit_metadata_exec(bContext *C, wmOperator *
 
   AssetMetaData &meta_data = *brush->id.asset_data;
   MEM_SAFE_DELETE(meta_data.author);
-  meta_data.author = RNA_string_get_alloc(op->ptr, "author", nullptr, 0, nullptr);
+  meta_data.author = RNA_string_get_alloc(op->ptr, "author", std::nullopt, nullptr);
   MEM_SAFE_DELETE(meta_data.description);
-  meta_data.description = RNA_string_get_alloc(op->ptr, "description", nullptr, 0, nullptr);
+  meta_data.description = RNA_string_get_alloc(op->ptr, "description", std::nullopt, nullptr);
 
   if (catalog_path_c[0]) {
     const asset_system::AssetCatalogPath catalog_path =
@@ -692,7 +696,6 @@ static bool brush_asset_save_poll(bContext *C)
   const std::optional<AssetLibraryReference> library_ref = get_asset_library_reference(
       *C, *paint, *brush);
   if (!library_ref) {
-    BLI_assert_unreachable();
     return false;
   }
 
@@ -755,7 +758,6 @@ static bool brush_asset_revert_poll(bContext *C)
   const std::optional<AssetLibraryReference> library_ref = get_asset_library_reference(
       *C, *paint, *brush);
   if (!library_ref) {
-    BLI_assert_unreachable();
     return false;
   }
   if (library_ref->type == ASSET_LIBRARY_LOCAL) {

@@ -52,12 +52,12 @@ static bool check_media_missing(const Scene *scene, const Strip *strip)
       int paths_count = 1;
       if (strip->type == STRIP_TYPE_IMAGE) {
         /* Image strip has array of file names. */
-        paths_count = int(MEM_allocN_len(elem) / sizeof(*elem));
+        paths_count = strip->data->stripdata_num;
       }
       char filepath[FILE_MAX];
       const char *basepath = ID_BLEND_PATH_FROM_GLOBAL(&scene->id);
       for (int i = 0; i < paths_count; i++, elem++) {
-        BLI_path_join(filepath, sizeof(filepath), strip->data->dirpath, elem->filename);
+        BLI_path_join(filepath, strip->data->dirpath, elem->filename);
         BLI_path_abs(filepath, basepath);
         if (!BLI_exists(filepath)) {
           return true;

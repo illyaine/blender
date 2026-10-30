@@ -169,10 +169,10 @@ class ScaleOperation : public NodeOperation {
     input.bind_as_texture(shader, "input_tx");
 
     Result &x_scale = get_input("X");
-    x_scale.bind_as_texture(shader, "x_scale_tx");
+    gpu::Texture *x_scale_texture = x_scale.bind_as_texture_or_single_value(shader, "x_scale_tx");
 
     Result &y_scale = get_input("Y");
-    y_scale.bind_as_texture(shader, "y_scale_tx");
+    gpu::Texture *y_scale_texture = y_scale.bind_as_texture_or_single_value(shader, "y_scale_tx");
 
     Result &output = get_result("Image");
     const Domain domain = compute_domain();
@@ -182,8 +182,8 @@ class ScaleOperation : public NodeOperation {
     compute_dispatch_threads_at_least(shader, domain.data_size);
 
     input.unbind_as_texture();
-    x_scale.unbind_as_texture();
-    y_scale.unbind_as_texture();
+    x_scale.unbind_as_texture_or_single_value(x_scale_texture);
+    y_scale.unbind_as_texture_or_single_value(y_scale_texture);
     output.unbind_as_image();
     GPU_shader_unbind();
   }
@@ -302,10 +302,12 @@ class ScaleOperation : public NodeOperation {
   /* Scale such that the new size matches the input absolute size. */
   float2 get_scale_absolute()
   {
-    const float2 input_size = float2(get_input("Image").domain().display_size);
-    const float2 absolute_size = float2(get_input("X").get_single_value_default<float>(),
-                                        get_input("Y").get_single_value_default<float>());
-    return absolute_size / input_size;
+    const Result &input = this->get_input("Image");
+    const float2 pixel_size = input.domain().pixel_size;
+    const float2 input_size = float2(input.domain().display_size);
+    const float2 absolute_size = float2(this->get_input("X").get_single_value_default<float>(),
+                                        this->get_input("Y").get_single_value_default<float>());
+    return (absolute_size * pixel_size) / input_size;
   }
 
   /* Scale by the render resolution percentage. */
@@ -361,7 +363,7 @@ class ScaleOperation : public NodeOperation {
     return float2(math::max(scale.x, scale.y));
   }
 
-  bool is_variable_size()
+  bool is_variable_size() const
   {
     /* Only relative scaling can be variable. */
     if (get_type() != CMP_NODE_SCALE_RELATIVE) {
@@ -371,7 +373,7 @@ class ScaleOperation : public NodeOperation {
     return !get_input("X").is_single_value() || !get_input("Y").is_single_value();
   }
 
-  CMPNodeScaleMethod get_type()
+  CMPNodeScaleMethod get_type() const
   {
     return CMPNodeScaleMethod(this->get_input("Type").get_single_value_default<MenuValue>().value);
   }
@@ -380,6 +382,11 @@ class ScaleOperation : public NodeOperation {
   {
     return CMPNodeScaleRenderSizeMethod(
         this->get_input("Frame Type").get_single_value_default<MenuValue>().value);
+  }
+
+  bool uses_asynchronous_execution() const override
+  {
+    return this->is_variable_size();
   }
 };
 

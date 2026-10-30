@@ -113,7 +113,7 @@ static wmOperatorStatus surface_slot_remove_exec(bContext *C, wmOperator * /*op*
   }
 
   canvas = pmd->canvas;
-  surface = static_cast<DynamicPaintSurface *>(canvas->surfaces.first);
+  surface = canvas->surfaces.first();
 
   /* find active surface and remove it */
   for (; surface; surface = surface->next) {
@@ -323,7 +323,7 @@ static void dpaint_bake_endjob(void *customdata)
 
   G.is_rendering = false;
 
-  WM_locked_interface_set(static_cast<wmWindowManager *>(G_MAIN->wm.first), false);
+  WM_locked_interface_set(G_MAIN->wm.first(), false);
 
   /* Bake was successful:
    * Report for ended bake and how long it took */
@@ -410,9 +410,8 @@ static void dynamicPaint_bakeImageSequence(DynamicPaintBakeJob *job)
       /* primary output layer */
       if (surface->flags & MOD_DPAINT_OUT1) {
         /* set filepath */
-        BLI_path_join(
-            filepath, sizeof(filepath), surface->image_output_path, surface->output_name);
-        BLI_path_frame(filepath, sizeof(filepath), frame, 4);
+        BLI_path_join(filepath, surface->image_output_path, surface->output_name);
+        BLI_path_frame(filepath, frame, 4);
 
         /* save image */
         dynamicPaint_outputSurfaceImage(surface, filepath, 0);
@@ -420,9 +419,8 @@ static void dynamicPaint_bakeImageSequence(DynamicPaintBakeJob *job)
       /* secondary output */
       if (surface->flags & MOD_DPAINT_OUT2 && surface->type == MOD_DPAINT_SURFACE_T_PAINT) {
         /* set filepath */
-        BLI_path_join(
-            filepath, sizeof(filepath), surface->image_output_path, surface->output_name2);
-        BLI_path_frame(filepath, sizeof(filepath), frame, 4);
+        BLI_path_join(filepath, surface->image_output_path, surface->output_name2);
+        BLI_path_frame(filepath, frame, 4);
 
         /* save image */
         dynamicPaint_outputSurfaceImage(surface, filepath, 1);

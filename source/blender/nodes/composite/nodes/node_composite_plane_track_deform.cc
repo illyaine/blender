@@ -98,27 +98,32 @@ static void node_declare(NodeDeclarationBuilder &b)
       .description("Exposure for motion blur as a factor of FPS");
 }
 
-static void node_init(const bContext *C, PointerRNA *ptr)
+static void node_init(bNodeTree * /*node_tree*/, bNode *node)
 {
-  bNode *node = static_cast<bNode *>(ptr->data);
-
   NodePlaneTrackDeformData *data = MEM_new<NodePlaneTrackDeformData>(__func__);
   node->storage = data;
+}
+
+static void node_init_api(const bContext *C, PointerRNA *node_ptr)
+{
+  bNode *node = node_ptr->data_as<bNode>();
+  NodePlaneTrackDeformData &data = node_storage(*node);
 
   const Scene *scene = CTX_data_scene(C);
-  if (scene->clip) {
-    MovieClip *clip = scene->clip;
-    MovieTracking *tracking = &clip->tracking;
+  MovieClip *movie_clip = scene->clip;
+  if (!movie_clip) {
+    return;
+  }
 
-    node->id = &clip->id;
-    id_us_plus(&clip->id);
+  node->id = &movie_clip->id;
+  id_us_plus(&movie_clip->id);
 
-    const MovieTrackingObject *tracking_object = BKE_tracking_object_get_active(tracking);
-    STRNCPY_UTF8(data->tracking_object, tracking_object->name);
+  MovieTracking *tracking = &movie_clip->tracking;
+  const MovieTrackingObject *tracking_object = BKE_tracking_object_get_active(tracking);
+  STRNCPY_UTF8(data.tracking_object, tracking_object->name);
 
-    if (tracking_object->active_plane_track) {
-      STRNCPY_UTF8(data->plane_track_name, tracking_object->active_plane_track->name);
-    }
+  if (tracking_object->active_plane_track) {
+    STRNCPY_UTF8(data.plane_track_name, tracking_object->active_plane_track->name);
   }
 }
 
@@ -347,14 +352,17 @@ class PlaneTrackDeformOperation : public NodeOperation {
 
   Domain compute_domain() override
   {
-    MovieTrackingPlaneTrack *plane_track = get_plane_track();
+    MovieTrackingPlaneTrack *plane_track = this->get_plane_track();
 
-    Result &input_image = get_input("Image");
+    Result &input_image = this->get_input("Image");
     if (input_image.is_single_value() || !plane_track) {
       return input_image.domain();
     }
 
-    return Domain(get_movie_clip_size());
+    const float2 pixel_size = this->context().get_compositing_domain().pixel_size;
+    Domain domain = Domain(int2(float2(this->get_movie_clip_size()) * pixel_size));
+    domain.pixel_size = pixel_size;
+    return domain;
   }
 
   Array<float4x4> compute_homography_matrices(MovieTrackingPlaneTrack *plane_track)
@@ -458,7 +466,8 @@ static void node_register()
   ntype.enum_name_legacy = "PLANETRACKDEFORM";
   ntype.nclass = NODE_CLASS_DISTORT;
   ntype.declare = node_declare;
-  ntype.initfunc_api = node_init;
+  ntype.initfunc = node_init;
+  ntype.initfunc_api = node_init_api;
   bke::node_type_storage(
       ntype, "NodePlaneTrackDeformData", node_free_standard_storage, node_copy_standard_storage);
   ntype.get_compositor_operation = get_compositor_operation;

@@ -15,6 +15,7 @@
 #include "BLI_compiler_attrs.hh"
 #include "BLI_enum_flags.hh"
 #include "BLI_math_vector_types.hh"
+#include "BLI_span.hh"
 #include "BLI_string_ref.hh"
 #include "BLI_vector.hh"
 
@@ -27,6 +28,9 @@
 #include "UI_interface.hh"
 #include "UI_interface_layout.hh"
 #include "UI_resources.hh"
+
+#include "buttons/interface_label_markdown.hh"
+
 struct IconTextOverlay;
 namespace blender {
 
@@ -60,7 +64,7 @@ struct SafetyRect;
 struct HandleButtonData;
 struct Layout;
 struct UndoStack_Text;
-/* ****************** general defines ************** */
+/* General defines. */
 
 #define RNA_ENUM_VALUE -2
 
@@ -261,7 +265,7 @@ struct Button : NonMovable {
 
   /** Run an action when holding the button down. */
   ButtonHandleHoldFunc hold_func = nullptr;
-  void *hold_argN = nullptr;
+  std::string *hold_arg = nullptr;
 
   StringRef tip;
   ButtonToolTipFunc tip_func = nullptr;
@@ -431,7 +435,7 @@ struct ButtonNumberSlider : public Button {
 
 /** Derived struct for #ButtonType::Color */
 struct ButtonColor : public Button {
-  bool is_pallete_color = false;
+  bool is_palette_color = false;
   int palette_color_index = -1;
 };
 
@@ -449,8 +453,7 @@ struct ButtonSearch : public Button {
   void *item_active = nullptr;
   char *item_active_str;
 
-  void *arg = nullptr;
-  FreeArgFunc arg_free_fn = nullptr;
+  std::shared_ptr<void> arg = nullptr;
 
   ButtonSearchContextMenuFn item_context_menu_fn = nullptr;
   ButtonSearchTooltipFn item_tooltip_fn = nullptr;
@@ -497,13 +500,19 @@ struct ButtonSeparatorLine : public Button {
   bool is_vertical;
 };
 
+enum class ButtonLabelType {
+  Standard,
+  Multiline,
+  Markdown,
+};
+
 /** Derived struct for #ButtonType::Label. */
 struct ButtonLabel : public Button {
   float alpha_factor = 1.0f;
   /** When the button draws an icon, also draw a mono-colored border for it. */
   bool draw_icon_border = false;
 
-  bool is_multiline = false;
+  ButtonLabelType label_type = ButtonLabelType::Standard;
   /**
    * Wrap cache from last layout pass.
    * This is also referenced in the button owning #Block so it can be looked up and reused in
@@ -511,9 +520,17 @@ struct ButtonLabel : public Button {
    * copied/moved around.
    */
   std::shared_ptr<TextWrapCache> wrap_cache;
+  /** Layout cache for markdown labels. */
+  std::shared_ptr<MarkdownLayoutCache> markdown_cache;
   /** Maximum lines to be drawn in multi-line labels, 0 means all. */
   int max_lines = 0;
   FontStyleAlign text_align = UI_STYLE_TEXT_LEFT;
+};
+
+/** Derived struct for #ButtonType::Image. */
+struct ButtonImage : public Button {
+  /** Uniquely identifies the image, to reuse it from the previous redraw. */
+  std::string key;
 };
 
 /** Derived struct for #ButtonType::Scroll. */
@@ -689,6 +706,7 @@ struct Block {
 
   Vector<std::unique_ptr<Button>> buttons_ptrs;
   Vector<std::shared_ptr<TextWrapCache>> text_wrap_cache;
+  Vector<std::shared_ptr<MarkdownLayoutCache>> markdown_layout_cache;
 
   Panel *panel = nullptr;
   Block *oldblock = nullptr;
@@ -767,6 +785,9 @@ struct Block {
   bool tooltipdisabled = false;
   /** True when #block_end has been called. */
   bool endblock = false;
+  /** True when #block_end has been called with #postpone_callbacks set to true,
+   * #block_post_layout_callbacks_exec must be called. */
+  bool post_block_layout_fns_pending = false;
 
   /** for doing delayed */
   BlockBoundsCalc bounds_type = BLOCK_BOUNDS_NONE;
@@ -908,12 +929,11 @@ void hsvcube_pos_from_vals(
  * when out of reasonable range (outside of 1e3/1e-3).
  */
 void button_string_get_ex(Button *but,
-                          char *str,
-                          size_t str_maxncpy,
+                          MutableCStr str,
                           int float_precision,
                           bool use_exp_float,
-                          bool *r_use_exp_float) ATTR_NONNULL(1, 2);
-void button_string_get(Button *but, char *str, size_t str_maxncpy) ATTR_NONNULL();
+                          bool *r_use_exp_float) ATTR_NONNULL(1);
+void button_string_get(Button *but, MutableCStr str) ATTR_NONNULL();
 /**
  * A version of #button_string_get_ex for dynamic buffer sizes
  * (where #button_string_get_maxncpy returns 0).
@@ -924,7 +944,7 @@ char *button_string_get_dynamic(Button *but, int *r_str_size);
 /**
  * \param str: will be overwritten.
  */
-void button_convert_to_unit_alt_name(Button *but, char *str, size_t str_maxncpy) ATTR_NONNULL();
+void button_convert_to_unit_alt_name(Button *but, MutableCStr str) ATTR_NONNULL();
 bool button_string_set(bContext *C, Button *but, const char *str) ATTR_NONNULL();
 bool button_string_eval_number(bContext *C, const Button *but, const char *str, double *r_value)
     ATTR_NONNULL();
@@ -1073,6 +1093,8 @@ struct PopupBlockHandle {
   wmOperator *popup_op = nullptr;
   ScrArea *ctx_area = nullptr;
   ARegion *ctx_region = nullptr;
+  /** The popup region this popup was opened from (if any). */
+  ARegion *ctx_region_popup = nullptr;
 
   /* return values */
   int menuretval = 0;
@@ -1405,7 +1427,7 @@ Button *button_find_new(Block *block_new, const Button *but_old);
 int button_text_padding(const Button *but);
 
 #ifdef WITH_INPUT_IME
-void button_ime_reposition(Button *but, int x, int y, bool complete);
+void button_ime_reposition(Button *but, int x, int y);
 const wmIMEData *button_ime_data_get(Button *but);
 #endif
 
@@ -1621,7 +1643,7 @@ void button_anim_paste_driver(bContext *C);
  * \a str can be NULL to only perform check if \a but has an expression at all.
  * \return if button has an expression.
  */
-bool button_anim_expression_get(Button *but, char *str, size_t str_maxncpy);
+bool button_anim_expression_get(Button *but, std::optional<MutableCStr> str);
 bool button_anim_expression_set(Button *but, const char *str);
 /**
  * Create new expression for button (i.e. a "scripted driver"), if it can be created.
@@ -1631,6 +1653,10 @@ void button_anim_autokey(bContext *C, Button *but, Scene *scene, float cfra);
 
 void button_anim_decorate_cb(bContext *C, void *arg_but, void *arg_dummy);
 void button_anim_decorate_update_from_flag(ButtonDecorator *but);
+/**
+ * \return True when the decorated button should be considered "pushed".
+ */
+bool button_anim_decorate_pushed_state(ButtonDecorator *but);
 
 /* `interface_query.cc` */
 
@@ -1730,7 +1756,7 @@ bool popup_context_menu_for_button(bContext *C, Button *but, const wmEvent *even
 /**
  * menu to show when right clicking on the panel header
  */
-void popup_context_menu_for_panel(bContext *C, ARegion *region, Panel *panel);
+int popup_context_menu_for_panel(bContext *C, ARegion *region, Panel *panel);
 
 /* `eyedroppers/interface_eyedropper.cc` */
 
@@ -1882,6 +1908,8 @@ int paste_property_drivers(Span<FCurve *> src_drivers,
                            PropertyRNA *dst_prop);
 
 }  // namespace internal
+void panel_region_width_set(ARegion *region, const float aspect, int unscaled_size);
+void region_panels_sort_for_search_filter_visibility_change(bContext *C, const ARegion *region);
 
 }  // namespace ui
 }  // namespace blender

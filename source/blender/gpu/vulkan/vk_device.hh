@@ -32,10 +32,6 @@ namespace blender::gpu {
 class VKBackend;
 
 struct VKExtensions {
-  /** Does the device support VkPhysicalDeviceVulkan12Features::shaderOutputViewportIndex. */
-  bool shader_output_viewport_index = false;
-  /** Does the device support VkPhysicalDeviceVulkan12Features::shaderOutputLayer. */
-  bool shader_output_layer = false;
   /**
    * Does the device support
    * VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR::fragmentShaderBarycentric.
@@ -65,11 +61,6 @@ struct VKExtensions {
 
   /** VK_KHR_maintenance4 */
   bool maintenance4 = false;
-
-  /**
-   * Does the device support logic ops.
-   */
-  bool logic_ops = false;
 
   /**
    * Does the device support VK_EXT_memory_priority
@@ -102,9 +93,35 @@ struct VKExtensions {
   bool vertex_input_dynamic_state = false;
 
   /**
+   * Does the device support VK_EXT_provoking_vertex
+   */
+  bool provoking_vertex = false;
+
+  /**
    * Does the device support VK_EXT_host_image_copy
    */
   bool host_image_copy = false;
+
+  /**
+   * Does the device support VK_EXT_shader_viewport_index_layer.
+   */
+  bool shader_viewport_index_layer = false;
+
+  /**
+   * Does the device support VK_KHR_spirv_1_4.
+   */
+  bool spirv_1_4 = false;
+
+  /**
+   * Does the device support VkPhysicalDeviceFeatures::multiDrawIndirect.
+   * When false, multi_draw_indirect is emulated with individual draw calls.
+   */
+  bool multi_draw_indirect = false;
+
+  /**
+   * Device supports `shaderClipDistance` feature.
+   */
+  bool shader_clip_distance = false;
 
   /** Log enabled features and extensions. */
   void log() const;
@@ -119,31 +136,17 @@ struct VKWorkarounds {
    */
   bool not_aligned_pixel_formats = false;
 
+  /**
+   * Some Qualcomm drivers keep command-buffer-local state written by `vkCmdSetViewport` across
+   * command buffer resets.
+   *
+   * When set, viewports and scissors are baked into the pipeline as static state and
+   * `vkCmdSetViewport`/`vkCmdSetScissor` are never used.
+   */
+  bool static_viewport_scissor = false;
+
   /** Log enabled workarounds. */
   void log() const;
-};
-
-/**
- * Shared resources between contexts that run in the same thread.
- */
-class VKThreadData : public NonCopyable, NonMovable {
- public:
-  /** Thread ID this instance belongs to. */
-  pthread_t thread_id;
-  VKDescriptorPools descriptor_pools;
-  VKDescriptorSetTracker descriptor_set;
-
-  /**
-   * The current rendering depth.
-   *
-   * GPU_rendering_begin can be called multiple times forming a hierarchy. The same resource pool
-   * should be used for the whole hierarchy. rendering_depth is increased for every
-   * GPU_rendering_begin and decreased when GPU_rendering_end is called. Resources pools are cycled
-   * when the rendering_depth set to 0.
-   */
-  int32_t rendering_depth = 0;
-
-  VKThreadData(VKDevice &device, pthread_t thread_id);
 };
 
 class VKDevice : public NonCopyable {
@@ -213,8 +216,6 @@ class VKDevice : public NonCopyable {
           VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
   /** Features support. */
   VkPhysicalDeviceFeatures vk_physical_device_features_ = {};
-  VkPhysicalDeviceVulkan11Features vk_physical_device_vulkan_11_features_ = {};
-  VkPhysicalDeviceVulkan12Features vk_physical_device_vulkan_12_features_ = {};
   VkPhysicalDeviceAccelerationStructureFeaturesKHR
       vk_physical_device_acceleration_structure_features_ = {
           VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
@@ -232,7 +233,6 @@ class VKDevice : public NonCopyable {
   std::string glsl_geom_patch_;
   std::string glsl_frag_patch_;
   std::string glsl_comp_patch_;
-  Vector<VKThreadData *> thread_data_;
 
   Shader *vk_backbuffer_blit_sh_ = nullptr;
 
@@ -241,6 +241,7 @@ class VKDevice : public NonCopyable {
   VKDiscardPool orphaned_data;
   /** Discard pool for resources that could still be used during rendering. */
   VKDiscardPool orphaned_data_render;
+  VKDescriptorPools descriptor_pools;
   VKPipelinePool pipelines;
   VKVertexInputDescriptionPool vertex_input_descriptions;
 
@@ -294,15 +295,6 @@ class VKDevice : public NonCopyable {
     return vk_physical_device_features_;
   }
 
-  const VkPhysicalDeviceVulkan11Features &physical_device_vulkan_11_features_get() const
-  {
-    return vk_physical_device_vulkan_11_features_;
-  }
-
-  const VkPhysicalDeviceVulkan12Features &physical_device_vulkan_12_features_get() const
-  {
-    return vk_physical_device_vulkan_12_features_;
-  }
   inline const VkPhysicalDeviceAccelerationStructureFeaturesKHR &
   physical_device_acceleration_structure_features_get() const
   {
@@ -384,6 +376,7 @@ class VKDevice : public NonCopyable {
   std::string glsl_fragment_patch_get(bool use_ray_query) const;
   std::string glsl_compute_patch_get(bool use_ray_query) const;
   shader::GeneratedSource extensions_define(StringRefNull stage_define, bool use_ray_query) const;
+  uint32_t glsl_patch_version_get(bool use_ray_query) const;
 
   /* -------------------------------------------------------------------- */
   /** \name Render graph
@@ -410,7 +403,7 @@ class VKDevice : public NonCopyable {
   {
     BLI_assert(vk_timeline_semaphore_ != VK_NULL_HANDLE);
     TimelineValue current_timeline;
-    VkResult result = functions.vkGetSemaphoreCounterValue(
+    VkResult result = functions.vkGetSemaphoreCounterValueKHR(
         vk_device_, vk_timeline_semaphore_, &current_timeline);
     UNUSED_VARS(result);
     BLI_assert_msg(
@@ -428,11 +421,6 @@ class VKDevice : public NonCopyable {
   /* -------------------------------------------------------------------- */
   /** \name Resource management
    * \{ */
-
-  /**
-   * Get or create current thread data.
-   */
-  VKThreadData &current_thread_data();
 
   void context_register(VKContext &context);
   void context_unregister(VKContext &context);

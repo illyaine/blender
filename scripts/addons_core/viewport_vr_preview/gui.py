@@ -157,7 +157,10 @@ class VIEW3D_PT_vr_location_scouting_captures(VRButtonsPanel, Panel):
         col.operator("view3d.vr_location_scouting_browse_captures", icon='TRIA_DOWN', text="").backward = False
 
         is_reviewing = context.window_manager.vr_capture_review_running
-        capture_review_text = "Review VR Captures" if not is_reviewing else "Exit Review"
+        capture_review_text = (
+            n_("Review VR Captures", i18n_contexts.operator_default) if not is_reviewing
+            else n_("Exit Review", i18n_contexts.operator_default)
+        )
         capture_review_icon = 'HIDE_OFF' if not is_reviewing else 'CANCEL'
         layout.operator(
             "view3d.vr_location_scouting_capture_review",
@@ -333,11 +336,10 @@ class VIEW3D_PT_vr_info(VRButtonsPanel, Panel):
     bl_label = "VR Info"
 
     @classmethod
-    def poll(cls, context):
+    def poll(cls, _context):
         return not bpy.app.build_options.xr_openxr
 
-    def draw(self, context):
-        import platform
+    def draw(self, _context):
         layout = self.layout
         missing_support_string = n_("Built without VR/OpenXR features")
         layout.label(icon='STATUS_ERROR', text=missing_support_string)

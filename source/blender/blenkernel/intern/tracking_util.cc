@@ -146,7 +146,7 @@ void tracks_map_merge(TracksMap *map, MovieTracking *tracking)
   }
 
   /* move all tracks, which aren't operating */
-  track = static_cast<MovieTrackingTrack *>(old_tracks->first);
+  track = old_tracks->first();
   while (track) {
     MovieTrackingTrack *next = track->next;
     BLI_addtail(&new_tracks, track);
@@ -154,7 +154,7 @@ void tracks_map_merge(TracksMap *map, MovieTracking *tracking)
   }
 
   /* now move all tracks which are currently operating and keep their names unique */
-  track = static_cast<MovieTrackingTrack *>(tracks.first);
+  track = tracks.first();
   while (track) {
     MovieTrackingTrack *next = track->next;
 
@@ -486,7 +486,7 @@ static void distortion_model_parameters_from_options(
   BLI_assert_msg(0, "Unknown distortion model");
 }
 
-void tracking_cameraIntrinscisOptionsFromTracking(
+void tracking_cameraIntrinsicsOptionsFromTracking(
     MovieTracking *tracking,
     const int calibration_width,
     const int calibration_height,
@@ -510,7 +510,7 @@ void tracking_cameraIntrinscisOptionsFromTracking(
   camera_intrinsics_options->image_height = int(calibration_height * aspy);
 }
 
-void tracking_trackingCameraFromIntrinscisOptions(
+void tracking_trackingCameraFromIntrinsicsOptions(
     MovieTracking *tracking, const libmv_CameraIntrinsicsOptions *camera_intrinsics_options)
 {
   MovieTrackingCamera *camera = &tracking->camera;

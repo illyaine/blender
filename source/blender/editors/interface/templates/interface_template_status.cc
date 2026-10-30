@@ -381,8 +381,7 @@ static std::string template_status_tooltip(bContext *C, void * /*argN*/, const S
 
   if (bmain->has_forward_compatibility_issues) {
     char writer_ver_str[12];
-    BKE_blender_version_blendfile_string_from_values(
-        writer_ver_str, sizeof(writer_ver_str), bmain->versionfile, -1);
+    BKE_blender_version_blendfile_string_from_values(writer_ver_str, bmain->versionfile, -1);
     tooltip_message += fmt::format(
         fmt::runtime(RPT_("File saved by newer Blender\n({}), expect loss of data")),
         writer_ver_str);
@@ -394,7 +393,13 @@ static std::string template_status_tooltip(bContext *C, void * /*argN*/, const S
     tooltip_message += RPT_(
         "This file is managed by the Blender asset system and cannot be overridden");
   }
-  if (bmain->colorspace.is_missing_opencolorio_config) {
+  if (bmain->colorspace.is_failed_opencolorio_config) {
+    if (!tooltip_message.empty()) {
+      tooltip_message += "\n\n";
+    }
+    tooltip_message += RPT_("OpenColorIO configuration failed to load");
+  }
+  else if (bmain->colorspace.is_missing_opencolorio_config) {
     if (!tooltip_message.empty()) {
       tooltip_message += "\n\n";
     }

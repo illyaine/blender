@@ -70,11 +70,10 @@ static void node_declare(NodeDeclarationBuilder &b)
       .description("The extension mode applied to the Y axis");
 }
 
-static void node_init(const bContext *C, PointerRNA *ptr)
+static void node_init_api(const bContext *C, PointerRNA *node_ptr)
 {
-  bNode *node = static_cast<bNode *>(ptr->data);
+  bNode *node = node_ptr->data_as<bNode>();
   Scene *scene = CTX_data_scene(C);
-
   node->id = id_cast<ID *>(scene->clip);
   id_us_plus(node->id);
 }
@@ -83,7 +82,11 @@ using namespace blender::compositor;
 
 class Stabilize2DOperation : public NodeOperation {
  public:
-  using NodeOperation::NodeOperation;
+  Stabilize2DOperation(Context &context, const bNode &node) : NodeOperation(context, node)
+  {
+    InputDescriptor &image_descriptor = this->get_input_descriptor("Image");
+    image_descriptor.skip_type_conversion = true;
+  }
 
   void execute() override
   {
@@ -92,6 +95,7 @@ class Stabilize2DOperation : public NodeOperation {
 
     MovieClip *movie_clip = get_movie_clip();
     if (input.is_single_value() || !movie_clip) {
+      output.set_type(input.type());
       output.share_data(input);
       return;
     }
@@ -107,11 +111,12 @@ class Stabilize2DOperation : public NodeOperation {
         movie_clip, frame_number, width, height, translation, &scale, &rotation);
 
     float3x3 transformation = math::from_loc_rot_scale<float3x3>(
-        translation, math::AngleRadian(rotation), float2(scale));
+        translation * input.domain().pixel_size, math::AngleRadian(rotation), float2(scale));
     if (do_inverse_stabilization()) {
       transformation = math::invert(transformation);
     }
 
+    output.set_type(input.type());
     output.share_data(input);
     output.transform(transformation);
     output.get_realization_options().interpolation = this->get_interpolation();
@@ -178,6 +183,11 @@ class Stabilize2DOperation : public NodeOperation {
   {
     return reinterpret_cast<MovieClip *>(node().id);
   }
+
+  bool uses_asynchronous_execution() const override
+  {
+    return false;
+  }
 };
 
 static NodeOperation *get_compositor_operation(Context &context, const bNode &node)
@@ -195,7 +205,7 @@ static void node_register()
   ntype.enum_name_legacy = "STABILIZE2D";
   ntype.nclass = NODE_CLASS_DISTORT;
   ntype.declare = node_declare;
-  ntype.initfunc_api = node_init;
+  ntype.initfunc_api = node_init_api;
   ntype.get_compositor_operation = get_compositor_operation;
 
   bke::node_register_type(ntype);

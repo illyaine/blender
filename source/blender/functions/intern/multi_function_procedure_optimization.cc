@@ -2,6 +2,12 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup fn
+ */
+
+#include "BLI_map.hh"
+
 #include "FN_multi_function_procedure_optimization.hh"
 
 namespace blender::fn::multi_function::procedure_optimization {

@@ -2,6 +2,9 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include "BKE_context.hh"
+#include "BKE_image.hh"
+
 #include "COM_node_operation.hh"
 
 #include "node_composite_util.hh"
@@ -24,6 +27,11 @@ static void node_init(bNodeTree * /*ntree*/, bNode *node)
   node->custom1 = NODE_VIEWER_SHORTCUT_NONE;
 }
 
+static void node_init_api(const bContext *C, PointerRNA * /*node_ptr*/)
+{
+  BKE_image_ensure_viewer(CTX_data_main(C), IMA_TYPE_COMPOSITE, "Viewer Node");
+}
+
 using namespace blender::compositor;
 
 class ViewerOperation : public NodeOperation {
@@ -33,6 +41,11 @@ class ViewerOperation : public NodeOperation {
   void execute() override
   {
     this->context().write_viewer(this->get_input("Image"));
+  }
+
+  bool uses_asynchronous_execution() const override
+  {
+    return false;
   }
 };
 
@@ -53,6 +66,7 @@ static void node_register()
   ntype.nclass = NODE_CLASS_OUTPUT;
   ntype.declare = node_declare;
   ntype.initfunc = node_init;
+  ntype.initfunc_api = node_init_api;
   bke::node_type_storage(
       ntype, "ImageUser", node_free_standard_storage, node_copy_standard_storage);
   ntype.get_compositor_operation = get_compositor_operation;

@@ -57,17 +57,14 @@ void write_mask_mesh(const Depsgraph &depsgraph,
 
   undo::push_nodes(depsgraph, object, node_mask, undo::Type::Mask);
 
-  bke::SpanAttributeWriter mask = attributes.lookup_or_add_for_write_span<float>(
-      ".sculpt_mask", bke::AttrDomain::Point);
-  if (!mask) {
-    return;
-  }
-  threading::EnumerableThreadSpecific<Vector<int>> all_index_data;
+  bke::SpanAttributeWriter mask = attributes.ensure_for_write_span<float>(".sculpt_mask",
+                                                                          bke::AttrDomain::Point);
+
   bke::pbvh::Tree &pbvh = *bke::object::pbvh_get(object);
   MutableSpan<bke::pbvh::MeshNode> nodes = pbvh.nodes<bke::pbvh::MeshNode>();
   node_mask.foreach_index(
       [&](const int i) {
-        Vector<int> &index_data = all_index_data.local();
+        Vector<int, bke::pbvh::MESH_LEAF_LIMIT> index_data;
         write_fn(mask.span, hide::node_visible_verts(nodes[i], hide_vert, index_data));
         bke::pbvh::node_update_mask_mesh(mask.span, nodes[i]);
       },
@@ -124,7 +121,7 @@ static wmOperatorStatus sculpt_mask_init_exec(bContext *C, wmOperator *op)
   SculptSession &ss = *ob.runtime->sculpt_session;
   Depsgraph &depsgraph = *CTX_data_ensure_evaluated_depsgraph(C);
 
-  BKE_sculpt_update_object_for_edit(&depsgraph, &ob, false);
+  BKE_sculptsession_update_for_edit(&depsgraph, &ob, false);
 
   bke::pbvh::Tree &pbvh = *bke::object::pbvh_get(ob);
   IndexMaskMemory memory;

@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup DNA
+ */
+
 #pragma once
 
 #include <cstdint>
@@ -15,7 +19,7 @@ class AttributeStorage;
 class AttributeStorageRuntime;
 }  // namespace bke
 
-/** DNA data for bke::Attribute::ArrayData. */
+/** DNA data for array storage of a bke::Attribute. */
 struct AttributeArray {
   void *data = nullptr;
   const ImplicitSharingInfoHandle *sharing_info = nullptr;
@@ -31,7 +35,7 @@ struct AttributeArray {
   char _pad[7] = {};
 };
 
-/** DNA data for bke::Attribute::SingleData. */
+/** DNA data for single value storage of a bke::Attribute. */
 struct AttributeSingle {
   void *data = nullptr;
   const ImplicitSharingInfoHandle *sharing_info = nullptr;

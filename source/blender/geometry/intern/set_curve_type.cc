@@ -2,8 +2,11 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup geo
+ */
+
 #include "BKE_attribute.hh"
-#include "BKE_attribute_math.hh"
 #include "BKE_curves.hh"
 #include "BKE_curves_utils.hh"
 #include "BKE_deform.hh"
@@ -409,7 +412,7 @@ static bke::CurvesGeometry convert_curves_to_bezier(const bke::CurvesGeometry &s
       if (attributes_to_skip.contains(attribute.name)) {
         continue;
       }
-      bke::attribute_math::gather(
+      array_utils::gather(
           attribute.src, src_point_by_dst_point, selection_points, attribute.dst.span);
     }
   };
@@ -501,7 +504,7 @@ static bke::CurvesGeometry convert_curves_to_nurbs(const bke::CurvesGeometry &sr
       if (attributes_to_skip.contains(attribute.name)) {
         continue;
       }
-      bke::attribute_math::gather(
+      array_utils::gather(
           attribute.src, src_point_by_dst_point, selection_points, attribute.dst.span);
     }
   };

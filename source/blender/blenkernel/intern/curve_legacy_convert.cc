@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup bke
+ */
+
 #include "BLI_listbase.hh"
 #include "BLI_task.hh"
 #include "BLI_vector.hh"
@@ -119,7 +123,7 @@ Curves *curve_legacy_to_curves(const Curve &curve_legacy, const ListBaseT<Nurb> 
   const OffsetIndices points_by_curve = curves.points_by_curve();
   MutableSpan<float3> positions = curves.positions_for_write();
   SpanAttributeWriter<float> radius_attribute =
-      curves_attributes.lookup_or_add_for_write_only_span<float>("radius", AttrDomain::Point);
+      curves_attributes.ensure_for_write_only_span<float>("radius", AttrDomain::Point);
   MutableSpan<float> radii = radius_attribute.span;
   MutableSpan<float> tilts = curves.tilt_for_write();
 

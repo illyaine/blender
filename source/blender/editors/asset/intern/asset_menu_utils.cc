@@ -137,9 +137,9 @@ const asset_system::AssetRepresentation *operator_asset_reference_props_get_asse
   AssetWeakReference weak_ref{};
   weak_ref.asset_library_type = eAssetLibraryType(RNA_enum_get(&ptr, "asset_library_type"));
   weak_ref.asset_library_identifier = RNA_string_get_alloc(
-      &ptr, "asset_library_identifier", nullptr, 0, nullptr);
+      &ptr, "asset_library_identifier", std::nullopt, nullptr);
   weak_ref.relative_asset_identifier = RNA_string_get_alloc(
-      &ptr, "relative_asset_identifier", nullptr, 0, nullptr);
+      &ptr, "relative_asset_identifier", std::nullopt, nullptr);
   return find_asset_from_weak_ref(C, weak_ref, reports);
 }
 
@@ -165,6 +165,7 @@ void draw_node_menu_for_catalog(const asset_system::AssetCatalogTreeItem &item,
 
 void draw_asset_menu_item(const asset_system::AssetRepresentation *asset,
                           StringRefNull opname,
+                          const wm::OpCallContext operator_call_context,
                           ui::Layout &layout)
 {
   ui::Layout &row = layout.row(true);
@@ -181,7 +182,7 @@ void draw_asset_menu_item(const asset_system::AssetRepresentation *asset,
                              ICON_NONE;
   const int icon = asset->is_online_only() ? ICON_INTERNET : icon_local;
   PointerRNA props_ptr = row.op(
-      opname, IFACE_(asset->get_name()), icon, wm::OpCallContext::InvokeDefault, UI_ITEM_NONE);
+      opname, IFACE_(asset->get_name()), icon, operator_call_context, UI_ITEM_NONE);
   asset::operator_asset_reference_props_set(*asset, props_ptr);
 }
 

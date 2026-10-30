@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup geo
+ */
+
 #include "GEO_merge_layers.hh"
 
 #include "BLI_math_matrix.hh"
@@ -116,11 +120,13 @@ GreasePencil *merge_layers(const GreasePencil &src_grease_pencil,
       return;
     }
     bke::GAttributeReader src_attribute = iter.get();
-    bke::GSpanAttributeWriter new_attribute = new_attributes.lookup_or_add_for_write_only_span(
-        iter.name, bke::AttrDomain::Layer, iter.data_type);
-    bke::attribute_math::mix_groups(
-        GVArraySpan(src_attribute.varray), layers_to_merge, new_attribute.span);
-    new_attribute.finish();
+    if (bke::GSpanAttributeWriter new_attribute = new_attributes.lookup_or_add_for_write_only_span(
+            iter.name, bke::AttrDomain::Layer, iter.data_type))
+    {
+      bke::attribute_math::mix_groups(
+          GVArraySpan(src_attribute.varray), layers_to_merge, new_attribute.span);
+      new_attribute.finish();
+    }
   });
 
   return new_grease_pencil;

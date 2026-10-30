@@ -49,8 +49,10 @@ struct SolveCameraJob {
   MovieReconstructContext *context = nullptr;
 };
 
-static bool solve_camera_initjob(
-    bContext *C, SolveCameraJob *scj, wmOperator *op, char *error_msg, int max_error)
+static bool solve_camera_initjob(bContext *C,
+                                 SolveCameraJob *scj,
+                                 wmOperator *op,
+                                 MutableCStr error_msg)
 {
   SpaceClip *sc = CTX_wm_space_clip(C);
   MovieClip *clip = ED_space_clip_get_clip(sc);
@@ -59,7 +61,7 @@ static bool solve_camera_initjob(
   MovieTrackingObject *tracking_object = BKE_tracking_object_get_active(tracking);
   int width, height;
 
-  if (!BKE_tracking_reconstruction_check(tracking, tracking_object, error_msg, max_error)) {
+  if (!BKE_tracking_reconstruction_check(tracking, tracking_object, error_msg)) {
     return false;
   }
 
@@ -101,8 +103,7 @@ static void solve_camera_startjob(void *scv, wmJobWorkerStatus *worker_status)
                                     &worker_status->stop,
                                     &worker_status->do_update,
                                     &worker_status->progress,
-                                    scj->stats_message,
-                                    sizeof(scj->stats_message));
+                                    scj->stats_message);
 }
 
 static void solve_camera_freejob(void *scv)
@@ -183,7 +184,7 @@ static wmOperatorStatus solve_camera_exec(bContext *C, wmOperator *op)
   SolveCameraJob *scj;
   char error_msg[256] = "\0";
   scj = MEM_new<SolveCameraJob>("SolveCameraJob data");
-  if (!solve_camera_initjob(C, scj, op, error_msg, sizeof(error_msg))) {
+  if (!solve_camera_initjob(C, scj, op, error_msg)) {
     if (error_msg[0]) {
       BKE_report(op->reports, RPT_ERROR, error_msg);
     }
@@ -207,13 +208,13 @@ static wmOperatorStatus solve_camera_invoke(bContext *C, wmOperator *op, const w
   wmJob *wm_job;
   char error_msg[256] = "\0";
 
-  if (WM_jobs_test(CTX_wm_manager(C), CTX_data_scene(C), WM_JOB_TYPE_CLIP_SOLVE_CAMERA)) {
+  if (WM_jobs_has_running(CTX_wm_manager(C), CTX_data_scene(C), WM_JOB_TYPE_CLIP_SOLVE_CAMERA)) {
     /* only one solve is allowed at a time */
     return OPERATOR_CANCELLED;
   }
 
   scj = MEM_new<SolveCameraJob>("SolveCameraJob data");
-  if (!solve_camera_initjob(C, scj, op, error_msg, sizeof(error_msg))) {
+  if (!solve_camera_initjob(C, scj, op, error_msg)) {
     if (error_msg[0]) {
       BKE_report(op->reports, RPT_ERROR, error_msg);
     }
@@ -252,7 +253,7 @@ static wmOperatorStatus solve_camera_invoke(bContext *C, wmOperator *op, const w
 static wmOperatorStatus solve_camera_modal(bContext *C, wmOperator * /*op*/, const wmEvent *event)
 {
   /* No running solver, remove handler and pass through. */
-  if (0 == WM_jobs_test(CTX_wm_manager(C), CTX_wm_area(C), WM_JOB_TYPE_CLIP_SOLVE_CAMERA)) {
+  if (!WM_jobs_has_running(CTX_wm_manager(C), CTX_data_scene(C), WM_JOB_TYPE_CLIP_SOLVE_CAMERA)) {
     return OPERATOR_FINISHED | OPERATOR_PASS_THROUGH;
   }
 

@@ -74,9 +74,9 @@ struct ID_Runtime_Remap {
 
 struct ID_Runtime {
   /**
-   * The last modifification time of the source .blend file where this ID was loaded from.
+   * The last modification time of the source .blend file where this ID was loaded from.
    */
-  int64_t src_blend_modifification_time;
+  int64_t src_blend_modification_time;
 
   ID_Runtime_Remap remap = {};
   /**
@@ -295,7 +295,8 @@ enum {
   LIB_ID_COPY_SHAPEKEY = 1 << 26,
   /**
    * EXCEPTION! Deep-copy screen used by copied workspace ID.
-   * WARNING: Should always be used, except in `NO_MAIN` cases of copying. */
+   * WARNING: Should always be used, except in `NO_MAIN` cases of copying.
+   */
   LIB_ID_COPY_SCREEN = 1 << 27,
   /** EXCEPTION! Specific deep-copy of node trees used e.g. for rendering purposes. */
   LIB_ID_COPY_NODETREE_LOCALIZE = 1 << 28,
@@ -677,11 +678,19 @@ void BKE_libblock_management_usercounts_clear(Main *bmain, void *idv);
  *
  * This is a no-op when `id` is `nullptr` or not linked.
  *
+ * \param enforce_fix: if true, unconditionally set the linked data as extern (even if it was
+ * already defined as such, or if it was in a broken state with e.g. no direct/indirect status
+ * defined).
+ *
  * This status is rechecked for the whole Main data-base as a step of pre-blend-file writing
  * (see #write_id_direct_linked_data_process_cb() and its usage in #write_file_handle).
  * This ensures that no reference to indirectly used IDs are kept in the written blend-file.
  */
-void id_lib_extern(ID *id);
+void id_lib_extern(ID *id, bool enforce_fix = false);
+/**
+ * Same as #id_lib_extern, but defines the ID as indirectly linked instead.
+ */
+void id_lib_indirect(ID *id, bool enforce_fix = false);
 void id_lib_indirect_weak_link(ID *id);
 /**
  * Ensure we have a real user
@@ -704,6 +713,22 @@ void id_us_min(ID *id);
 void id_fake_user_set(ID *id);
 void id_fake_user_clear(ID *id);
 void BKE_id_newptr_and_tag_clear(ID *id);
+
+namespace bke::id {
+
+/**
+ * Safely/sanely set the library of an ID.
+ *
+ * Currently, it mostly ensures that its embedded IDs, if any, are in sync.
+ *
+ * \note: It _does not_ handle shapekeys. Even though these behave almost as embedded data, they
+ * are still registered in the Main database, and the various ID maps, which makes changing their
+ * libraries having various potential side-effects. Caller is responsible to ensure that the
+ * relevant shapekeys libraries are properly updated.
+ */
+void id_lib_set(ID &id, Library *lib);
+
+}  // namespace bke::id
 
 /** Flags to control make local code behavior. */
 enum {
@@ -728,6 +753,9 @@ enum {
 
   /** Clear any liboverride data as part of making this linked data local. */
   LIB_ID_MAKELOCAL_LIBOVERRIDE_CLEAR = 1 << 17,
+
+  /** Do not make linked packed data local. */
+  LIB_ID_MAKELOCAL_LINKEDPACKED_KEEP = 1 << 18,
 };
 
 /**

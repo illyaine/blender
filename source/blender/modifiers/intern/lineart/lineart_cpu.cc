@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-/* \file
+/** \file
  * \ingroup editors
  */
 
@@ -145,7 +145,7 @@ static LineartEdgeSegment *lineart_give_segment(LineartData *ld)
   BLI_spin_lock(&ld->lock_cuts);
 
   /* See if there is any already allocated memory we can reuse. */
-  if (ld->wasted_cuts.first) {
+  if (ld->wasted_cuts.first_) {
     LineartEdgeSegment *es = static_cast<LineartEdgeSegment *>(BLI_pophead(&ld->wasted_cuts));
     BLI_spin_unlock(&ld->lock_cuts);
     memset(es, 0, sizeof(LineartEdgeSegment));
@@ -268,7 +268,7 @@ void lineart_edge_cut(LineartData *ld,
   else {
     /* We have yet to reach a existing cutting point even after we searched the whole line, so we
      * append the new cut to the end. */
-    i_seg = static_cast<LineartEdgeSegment *>(e->segments.last);
+    i_seg = e->segments.last();
     new_seg1->occlusion = i_seg->occlusion;
     new_seg1->material_mask_bits = i_seg->material_mask_bits;
     new_seg1->shadow_mask_bits = i_seg->shadow_mask_bits;
@@ -287,7 +287,7 @@ void lineart_edge_cut(LineartData *ld,
     }
   }
   else {
-    i_seg = static_cast<LineartEdgeSegment *>(e->segments.last);
+    i_seg = e->segments.last();
     new_seg2->occlusion = i_seg->occlusion;
     new_seg2->material_mask_bits = i_seg->material_mask_bits;
     new_seg2->shadow_mask_bits = i_seg->shadow_mask_bits;
@@ -1354,7 +1354,7 @@ void lineart_main_free_adjacent_data(LineartData *ld)
   while (
       LinkData *link = static_cast<LinkData *>(BLI_pophead(&ld->geom.triangle_adjacent_pointers)))
   {
-    MEM_delete_void(link->data);
+    MEM_delete(static_cast<LineartTriangleAdjacent *>(link->data));
   }
   for (LineartElementLinkNode &eln : ld->geom.triangle_buffer_pointers) {
     LineartTriangle *tri = static_cast<LineartTriangle *>(eln.pointer);
@@ -2363,7 +2363,7 @@ static int lineart_usage_check(Collection *c, Object *ob, bool is_render)
     return ob->lineart.usage;
   }
 
-  if (c->gobject.first) {
+  if (c->gobject.first_) {
     if (BKE_collection_has_object(c, id_cast<Object *>(ob->id.orig_id))) {
       if ((is_render && (c->flag & COLLECTION_HIDE_RENDER)) ||
           ((!is_render) && (c->flag & COLLECTION_HIDE_VIEWPORT)))
@@ -3384,8 +3384,8 @@ static bool lineart_schedule_new_triangle_task(LineartIsecThread *th)
   }
 
   th->pending_to = eln ? eln :
-                         static_cast<LineartElementLinkNode *>(
-                             ld->geom.triangle_buffer_pointers.last);
+
+                         ld->geom.triangle_buffer_pointers.last();
   th->index_to = ld->isect_scheduled_up_to_index;
 
   BLI_spin_unlock(&ld->lock_task);
@@ -3405,7 +3405,7 @@ static void lineart_init_isec_thread(LineartIsecData *d, LineartData *ld, int th
   d->thread_count = thread_count;
 
   ld->isect_scheduled_up_to = static_cast<LineartElementLinkNode *>(
-      ld->geom.triangle_buffer_pointers.first);
+      ld->geom.triangle_buffer_pointers.first_);
   ld->isect_scheduled_up_to_index = 0;
 
   for (int i = 0; i < thread_count; i++) {
@@ -3891,7 +3891,7 @@ static void lineart_bounding_areas_connect_new(LineartData *ld, LineartBoundingA
   /* Then remove the parent bounding areas from
    * their original adjacent areas. */
   for (LinkData &lip : root->lp) {
-    for (lip2 = static_cast<LinkData *>((static_cast<LineartBoundingArea *>(lip.data))->rp.first);
+    for (lip2 = static_cast<LinkData *>((static_cast<LineartBoundingArea *>(lip.data))->rp.first_);
          lip2;
          lip2 = next_lip)
     {
@@ -3910,7 +3910,7 @@ static void lineart_bounding_areas_connect_new(LineartData *ld, LineartBoundingA
     }
   }
   for (LinkData &lip : root->rp) {
-    for (lip2 = static_cast<LinkData *>((static_cast<LineartBoundingArea *>(lip.data))->lp.first);
+    for (lip2 = static_cast<LinkData *>((static_cast<LineartBoundingArea *>(lip.data))->lp.first_);
          lip2;
          lip2 = next_lip)
     {
@@ -3929,7 +3929,7 @@ static void lineart_bounding_areas_connect_new(LineartData *ld, LineartBoundingA
     }
   }
   for (LinkData &lip : root->up) {
-    for (lip2 = static_cast<LinkData *>((static_cast<LineartBoundingArea *>(lip.data))->bp.first);
+    for (lip2 = static_cast<LinkData *>((static_cast<LineartBoundingArea *>(lip.data))->bp.first_);
          lip2;
          lip2 = next_lip)
     {
@@ -3948,7 +3948,7 @@ static void lineart_bounding_areas_connect_new(LineartData *ld, LineartBoundingA
     }
   }
   for (LinkData &lip : root->bp) {
-    for (lip2 = static_cast<LinkData *>((static_cast<LineartBoundingArea *>(lip.data))->up.first);
+    for (lip2 = static_cast<LinkData *>((static_cast<LineartBoundingArea *>(lip.data))->up.first_);
          lip2;
          lip2 = next_lip)
     {
@@ -5114,7 +5114,7 @@ bool MOD_lineart_compute_feature_lines_v3(Depsgraph *depsgraph,
     lineart_main_transform_and_add_shadow(ld, shadow_veln, shadow_eeln);
   }
 
-  if (!ld->geom.vertex_buffer_pointers.first) {
+  if (!ld->geom.vertex_buffer_pointers.first_) {
     /* No geometry loaded, return early. */
     return true;
   }
@@ -5433,13 +5433,13 @@ void MOD_lineart_gpencil_generate_v3(const LineartCache *cache,
   MutableAttributeAccessor attributes = new_curves.attributes_for_write();
   MutableSpan<float3> point_positions = new_curves.positions_for_write();
 
-  SpanAttributeWriter<float> point_radii = attributes.lookup_or_add_for_write_only_span<float>(
+  SpanAttributeWriter<float> point_radii = attributes.ensure_for_write_only_span<float>(
       "radius", AttrDomain::Point);
 
-  SpanAttributeWriter<float> point_opacities = attributes.lookup_or_add_for_write_span<float>(
+  SpanAttributeWriter<float> point_opacities = attributes.ensure_for_write_span<float>(
       "opacity", AttrDomain::Point);
 
-  SpanAttributeWriter<int> stroke_materials = attributes.lookup_or_add_for_write_span<int>(
+  SpanAttributeWriter<int> stroke_materials = attributes.ensure_for_write_span<int>(
       "material_index", AttrDomain::Curve);
 
   MutableSpan<int> offsets = new_curves.offsets_for_write();
@@ -5560,7 +5560,7 @@ void MOD_lineart_gpencil_generate_v3(const LineartCache *cache,
 
   offsets[writer.index_range().last() + 1] = up_to_point;
 
-  SpanAttributeWriter<bool> stroke_cyclic = attributes.lookup_or_add_for_write_span<bool>(
+  SpanAttributeWriter<bool> stroke_cyclic = attributes.ensure_for_write_span<bool>(
       "cyclic", AttrDomain::Curve);
   stroke_cyclic.span.fill(false);
   stroke_cyclic.finish();
@@ -5570,8 +5570,8 @@ void MOD_lineart_gpencil_generate_v3(const LineartCache *cache,
   stroke_materials.finish();
 
   if (fill_strokes) {
-    SpanAttributeWriter<int> fill_ids = attributes.lookup_or_add_for_write_span<int>(
-        "fill_id", AttrDomain::Curve);
+    SpanAttributeWriter<int> fill_ids = attributes.ensure_for_write_span<int>("fill_id",
+                                                                              AttrDomain::Curve);
     bke::greasepencil::gather_next_available_fill_ids({}, fill_ids.span);
     fill_ids.finish();
   }

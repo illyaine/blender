@@ -175,7 +175,7 @@ static std::optional<std::string> rna_PointCache_path(const PointerRNA *ptr)
   }
 
   ModifierData *md;
-  for (md = static_cast<ModifierData *>(ob->modifiers.first); md; md = md->next) {
+  for (md = ob->modifiers.first(); md; md = md->next) {
     const ModifierTypeInfo *mti = BKE_modifier_get_info(md->type);
 
     if (!(mti->flags & eModifierTypeFlag_UsesPointCache)) {
@@ -183,7 +183,7 @@ static std::optional<std::string> rna_PointCache_path(const PointerRNA *ptr)
     }
 
     char name_esc[sizeof(md->name) * 2];
-    BLI_str_escape(name_esc, md->name, sizeof(name_esc));
+    BLI_str_escape(name_esc, md->name);
 
     switch (md->type) {
       case eModifierType_ParticleSystem: {
@@ -197,11 +197,11 @@ static std::optional<std::string> rna_PointCache_path(const PointerRNA *ptr)
         DynamicPaintModifierData *pmd = reinterpret_cast<DynamicPaintModifierData *>(md);
         if (pmd->canvas) {
           DynamicPaintSurface *surface = static_cast<DynamicPaintSurface *>(
-              pmd->canvas->surfaces.first);
+              pmd->canvas->surfaces.first());
           for (; surface; surface = surface->next) {
             if (surface->pointcache == cache) {
               char name_surface_esc[sizeof(surface->name) * 2];
-              BLI_str_escape(name_surface_esc, surface->name, sizeof(name_surface_esc));
+              BLI_str_escape(name_surface_esc, surface->name);
               return fmt::format(
                   "modifiers[\"{}\"].canvas_settings.canvas_surfaces[\"{}\"].point_cache",
                   name_esc,
@@ -333,7 +333,7 @@ static void rna_Cache_idname_change(Main * /*bmain*/, Scene * /*scene*/, Pointer
 
     BKE_ptcache_ids_from_object(&pidlist, ob, scene, 0);
 
-    for (pid = static_cast<PTCacheID *>(pidlist.first); pid; pid = pid->next) {
+    for (pid = pidlist.first(); pid; pid = pid->next) {
       if (pid->cache == cache) {
         pid2 = pid;
       }
@@ -373,8 +373,8 @@ static void rna_Cache_list_begin(CollectionPropertyIterator *iter, PointerRNA *p
     cache = cache->prev;
   }
 
-  lb.first = cache;
-  lb.last = nullptr; /* not used by listbase_begin */
+  lb.first_ = cache;
+  lb.last_ = nullptr; /* not used by listbase_begin */
 
   rna_iterator_listbase_begin(iter, ptr, &lb, nullptr);
 }
@@ -488,7 +488,7 @@ static std::optional<std::string> rna_CollisionSettings_path(const PointerRNA * 
   if (md) {
     char name_esc[sizeof(md->name) * 2];
 
-    BLI_str_escape(name_esc, md->name, sizeof(name_esc));
+    BLI_str_escape(name_esc, md->name);
     return fmt::format("modifiers[\"{}\"].settings", name_esc);
   }
   else {
@@ -645,13 +645,13 @@ static void rna_SoftBodySettings_goal_vgroup_set(PointerRNA *ptr, const char *va
 static void rna_SoftBodySettings_mass_vgroup_set(PointerRNA *ptr, const char *value)
 {
   SoftBody *sb = static_cast<SoftBody *>(ptr->data);
-  rna_object_vgroup_name_set(ptr, value, sb->namedVG_Mass, sizeof(sb->namedVG_Mass));
+  rna_object_vgroup_name_set(ptr, value, sb->namedVG_Mass);
 }
 
 static void rna_SoftBodySettings_spring_vgroup_set(PointerRNA *ptr, const char *value)
 {
   SoftBody *sb = static_cast<SoftBody *>(ptr->data);
-  rna_object_vgroup_name_set(ptr, value, sb->namedVG_Spring_K, sizeof(sb->namedVG_Spring_K));
+  rna_object_vgroup_name_set(ptr, value, sb->namedVG_Spring_K);
 }
 
 static std::optional<std::string> rna_SoftBodySettings_path(const PointerRNA *ptr)
@@ -660,7 +660,7 @@ static std::optional<std::string> rna_SoftBodySettings_path(const PointerRNA *pt
   const ModifierData *md = BKE_modifiers_findby_type(ob, eModifierType_Softbody);
   char name_esc[sizeof(md->name) * 2];
 
-  BLI_str_escape(name_esc, md->name, sizeof(name_esc));
+  BLI_str_escape(name_esc, md->name);
   return fmt::format("modifiers[\"{}\"].settings", name_esc);
 }
 
@@ -855,7 +855,7 @@ static std::optional<std::string> rna_EffectorWeight_path(const PointerRNA *ptr)
       /* no pointer from modifier data to actual softbody storage, would be good to add */
       if (ob->soft->effector_weights == ew) {
         char name_esc[sizeof(md->name) * 2];
-        BLI_str_escape(name_esc, md->name, sizeof(name_esc));
+        BLI_str_escape(name_esc, md->name);
         return fmt::format("modifiers[\"{}\"].settings.effector_weights", name_esc);
       }
     }
@@ -866,7 +866,7 @@ static std::optional<std::string> rna_EffectorWeight_path(const PointerRNA *ptr)
       ClothModifierData *cmd = reinterpret_cast<ClothModifierData *>(md);
       if (cmd->sim_parms->effector_weights == ew) {
         char name_esc[sizeof(md->name) * 2];
-        BLI_str_escape(name_esc, md->name, sizeof(name_esc));
+        BLI_str_escape(name_esc, md->name);
         return fmt::format("modifiers[\"{}\"].settings.effector_weights", name_esc);
       }
     }
@@ -878,7 +878,7 @@ static std::optional<std::string> rna_EffectorWeight_path(const PointerRNA *ptr)
       if (fmd->type == MOD_FLUID_TYPE_DOMAIN && fmd->domain && fmd->domain->effector_weights == ew)
       {
         char name_esc[sizeof(md->name) * 2];
-        BLI_str_escape(name_esc, md->name, sizeof(name_esc));
+        BLI_str_escape(name_esc, md->name);
         return fmt::format("modifiers[\"{}\"].domain_settings.effector_weights", name_esc);
       }
     }
@@ -890,15 +890,15 @@ static std::optional<std::string> rna_EffectorWeight_path(const PointerRNA *ptr)
 
       if (pmd->canvas) {
         DynamicPaintSurface *surface = static_cast<DynamicPaintSurface *>(
-            pmd->canvas->surfaces.first);
+            pmd->canvas->surfaces.first());
 
         for (; surface; surface = surface->next) {
           if (surface->effector_weights == ew) {
             char name_esc[sizeof(md->name) * 2];
             char name_esc_surface[sizeof(surface->name) * 2];
 
-            BLI_str_escape(name_esc, md->name, sizeof(name_esc));
-            BLI_str_escape(name_esc_surface, surface->name, sizeof(name_esc_surface));
+            BLI_str_escape(name_esc, md->name);
+            BLI_str_escape(name_esc_surface, surface->name);
             return fmt::format(
                 "modifiers[\"{}\"].canvas_settings.canvas_surfaces[\"{}\"]"
                 ".effector_weights",

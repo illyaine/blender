@@ -189,18 +189,18 @@ int BLI_cpu_support_sse42()
   return 0;
 }
 
-void BLI_hostname_get(char *buffer, size_t buffer_maxncpy)
+void BLI_hostname_get(MutableCStr buffer)
 {
 #ifndef WIN32
-  if (gethostname(buffer, buffer_maxncpy - 1) < 0) {
-    BLI_strncpy(buffer, "-unknown-", buffer_maxncpy);
+  if (gethostname(buffer.data(), buffer.size() - 1) < 0) {
+    STRNCPY(buffer, "-unknown-");
   }
   /* When `gethostname()` truncates, it doesn't guarantee the trailing `\0`. */
-  buffer[buffer_maxncpy - 1] = '\0';
+  buffer[buffer.size() - 1] = '\0';
 #else
-  DWORD buffer_size_in_out = buffer_maxncpy;
-  if (!GetComputerName(buffer, &buffer_size_in_out)) {
-    BLI_strncpy(buffer, "-unknown-", buffer_maxncpy);
+  DWORD buffer_size_in_out = buffer.size();
+  if (!GetComputerName(buffer.data(), &buffer_size_in_out)) {
+    STRNCPY(buffer, "-unknown-");
   }
 #endif
 }
@@ -233,7 +233,7 @@ void BLI_system_max_open_files_ensure()
     ok = _setmaxstdio(max_open_files) == max_open_files;
   }
 #else
-  struct rlimit limit;
+  rlimit limit;
   ok = getrlimit(RLIMIT_NOFILE, &limit) == 0;
   if (ok && limit.rlim_cur < rlim_t(max_open_files)) {
     limit.rlim_cur = std::min(rlim_t(max_open_files), limit.rlim_max);

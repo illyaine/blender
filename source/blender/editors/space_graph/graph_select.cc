@@ -12,6 +12,7 @@
 
 #include "MEM_guardedalloc.h"
 
+#include "BLI_array.hh"
 #include "BLI_lasso_2d.hh"
 #include "BLI_listbase.hh"
 #include "BLI_math_vector_c.hh"
@@ -118,7 +119,7 @@ static void nearest_fcurve_vert_store(ListBaseT<tNearestVertInfo> *matches,
         /* check if distance from mouse cursor to vert in screen space is within tolerance */
         ((dist = len_v2v2_int(mval, screen_co)) <= GVERTSEL_TOL))
     {
-      tNearestVertInfo *nvi = static_cast<tNearestVertInfo *>(matches->last);
+      tNearestVertInfo *nvi = matches->last();
       bool replace = false;
 
       /* If there is already a point for the F-Curve,
@@ -1433,14 +1434,12 @@ static void select_moreless_graph_keys(bAnimContext *ac, short mode)
     }
 
     /* build up map of whether F-Curve's keyframes should be selected or not */
-    ked.data = MEM_new_zeroed(fcu->totvert, "selmap graphEdit");
+    Array<char> selmap(fcu->totvert, 0);
+    ked.data = selmap.data();
     ANIM_fcurve_keyframes_loop(&ked, fcu, nullptr, build_cb, nullptr);
 
     /* based on this map, adjust the selection status of the keyframes */
     ANIM_fcurve_keyframes_loop(&ked, fcu, nullptr, bezt_selmap_flush, nullptr);
-
-    /* free the selmap used here */
-    MEM_delete_void(ked.data);
     ked.data = nullptr;
   }
 
@@ -1841,7 +1840,8 @@ static wmOperatorStatus mouse_graph_keys(bAnimContext *ac,
   }
 
   /* Set active F-Curve when something was actually selected (so not on a deselect), except when
-   * dragging the selected keys. Needs to be called with (sipo->flag & SIPO_SELCUVERTSONLY),
+   * dragging the selected keys. Needs to be called with
+   * (U.animation_flag & USER_ANIM_ONLY_SHOW_SELECTED_CURVE_KEYS),
    * otherwise the active flag won't be set #26452. */
   if (!run_modal && (nvi->fcu->flag & FCURVE_SELECTED) && something_was_selected) {
     /* NOTE: Sync the filter flags with findnearest_fcurve_vert. */

@@ -10,6 +10,7 @@
 
 #include <cstring>
 
+#include "AS_asset_library.hh"
 #include "AS_essentials_library.hh"
 #include "AS_remote_library.hh"
 
@@ -54,7 +55,7 @@ bool exists()
   }
 
   char userpref[FILE_MAX];
-  BLI_path_join(userpref, sizeof(userpref), cfgdir->c_str(), BLENDER_USERPREF_FILE);
+  BLI_path_join(userpref, cfgdir->c_str(), BLENDER_USERPREF_FILE);
   return BLI_exists(userpref);
 }
 
@@ -80,14 +81,28 @@ bUserAssetLibrary *BKE_preferences_asset_library_add(UserDef *userdef,
     BKE_preferences_asset_library_name_set(userdef, library, name);
   }
   if (dirpath) {
+    STRNCPY(library->resolved_dirpath, AS_asset_library_resolve_path(dirpath).c_str());
     STRNCPY(library->dirpath, dirpath);
   }
 
   return library;
 }
 
+bUserAssetLibrary *BKE_preferences_project_asset_library_add(UserDef *userdef,
+                                                             const char *name,
+                                                             const char *dirpath,
+                                                             std::optional<UUID> uuid)
+{
+  bUserAssetLibrary *library = BKE_preferences_asset_library_add(userdef, name, dirpath);
+  library->flag |= ASSET_LIBRARY_PROJECT_DEFINED;
+  library->uuid = uuid.value_or(BLI_uuid_generate_random());
+  return library;
+}
+
 void BKE_preferences_asset_library_remove(UserDef *userdef, bUserAssetLibrary *library)
 {
+  MEM_delete(library->auth_token);
+  MEM_delete(library->invalid_uuid);
   BLI_freelinkN(&userdef->asset_libraries, library);
 }
 
@@ -106,9 +121,11 @@ void BKE_preferences_asset_library_name_set(UserDef *userdef,
 
 void BKE_preferences_asset_library_path_set(bUserAssetLibrary *library, const char *path)
 {
+  STRNCPY(library->resolved_dirpath, AS_asset_library_resolve_path(path).c_str());
   STRNCPY(library->dirpath, path);
-  if (BLI_is_file(library->dirpath)) {
+  if (BLI_is_file(library->resolved_dirpath)) {
     BLI_path_parent_dir(library->dirpath);
+    BLI_path_parent_dir(library->resolved_dirpath);
   }
 }
 
@@ -128,7 +145,9 @@ bUserAssetLibrary *BKE_preferences_asset_library_containing_path(const UserDef *
                                                                  const char *path)
 {
   for (bUserAssetLibrary &asset_lib_pref : userdef->asset_libraries) {
-    if (asset_lib_pref.dirpath[0] && BLI_path_contains(asset_lib_pref.dirpath, path)) {
+    if (asset_lib_pref.resolved_dirpath[0] &&
+        BLI_path_contains(asset_lib_pref.resolved_dirpath, path))
+    {
       return &asset_lib_pref;
     }
   }
@@ -141,12 +160,32 @@ int BKE_preferences_asset_library_get_index(const UserDef *userdef,
   return BLI_findindex(&userdef->asset_libraries, library);
 }
 
+bool BKE_preferences_asset_library_is_available(const UserDef *userdef,
+                                                const bUserAssetLibrary *library)
+{
+  if (library->flag & ASSET_LIBRARY_DISABLED) {
+    return false;
+  }
+  if (library->extension_id[0]) {
+    const bUserExtensionRepo *repo = BKE_preferences_extension_asset_library_repo_get(userdef,
+                                                                                      library);
+    /* The libraries of a removed repository are removed too, any that remain are unusable. */
+    if (repo == nullptr) {
+      return false;
+    }
+    if (repo->flag & USER_EXTENSION_REPO_FLAG_DISABLED) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool BKE_preferences_asset_library_is_valid(const UserDef *userdef,
                                             const bUserAssetLibrary *library,
                                             const bool check_directory_exists)
 {
   /* Check disabled libraries. */
-  if (library->flag & ASSET_LIBRARY_DISABLED) {
+  if (!BKE_preferences_asset_library_is_available(userdef, library)) {
     return false;
   }
 
@@ -166,7 +205,7 @@ bool BKE_preferences_asset_library_is_valid(const UserDef *userdef,
   if (!library->dirpath[0]) {
     return false;
   }
-  if (check_directory_exists && !BLI_is_dir(library->dirpath)) {
+  if (check_directory_exists && !BLI_is_dir(library->resolved_dirpath)) {
     return false;
   }
 
@@ -186,13 +225,37 @@ void BKE_preferences_asset_library_default_add(UserDef *userdef)
       userdef, DATA_(BKE_PREFS_ASSET_LIBRARY_DEFAULT_NAME), nullptr);
 
   /* Add new "Default" library under '[doc_path]/Blender/Assets'. */
-  BLI_path_join(
-      library->dirpath, sizeof(library->dirpath), documents_path, N_("Blender"), N_("Assets"));
+  BLI_path_join(library->dirpath, documents_path, N_("Blender"), N_("Assets"));
+  STRNCPY(library->resolved_dirpath, AS_asset_library_resolve_path(library->dirpath).c_str());
+}
+
+void BKE_preferences_asset_library_read_data(BlendDataReader *reader, bUserAssetLibrary *library)
+{
+  if (library->auth_token) {
+    BLO_read_string(reader, &library->auth_token);
+  }
+  if (library->invalid_uuid) {
+    BLO_read_string(reader, &library->invalid_uuid);
+  }
+  /* Ensure that the resolved path dir is up to date. */
+  STRNCPY(library->resolved_dirpath, AS_asset_library_resolve_path(library->dirpath).c_str());
+}
+
+void BKE_preferences_asset_library_write_data(BlendWriter *writer,
+                                              const bUserAssetLibrary *library)
+{
+  if (library->auth_token) {
+    writer->write_string(library->auth_token);
+  }
+  if (library->invalid_uuid) {
+    writer->write_string(library->invalid_uuid);
+  }
 }
 
 bUserAssetLibrary *BKE_preferences_remote_asset_library_add(UserDef *userdef,
                                                             const char *name,
-                                                            const char *remote_url)
+                                                            const char *remote_url,
+                                                            const char *auth_token)
 {
   bUserAssetLibrary *library = MEM_new<bUserAssetLibrary>(__func__);
 
@@ -205,20 +268,59 @@ bUserAssetLibrary *BKE_preferences_remote_asset_library_add(UserDef *userdef,
 
   BKE_preferences_remote_asset_library_url_set(library, remote_url);
 
+  if (auth_token && auth_token[0]) {
+    library->flag |= ASSET_LIBRARY_USE_AUTH_TOKEN;
+    BKE_preferences_remote_asset_library_auth_token_set(library, auth_token);
+  }
+
   return library;
+}
+
+bUserAssetLibrary *BKE_preferences_project_remote_asset_library_add(UserDef *userdef,
+                                                                    const char *name,
+                                                                    const char *remote_url,
+                                                                    const char *auth_token)
+{
+  bUserAssetLibrary *library = BKE_preferences_remote_asset_library_add(
+      userdef, name, remote_url, auth_token);
+  library->flag |= ASSET_LIBRARY_PROJECT_DEFINED;
+  return library;
+}
+
+bUserAssetLibraryOwner BKE_preferences_asset_library_owner_get(const bUserAssetLibrary *library)
+{
+  if (library->flag & ASSET_LIBRARY_PROJECT_DEFINED) {
+    return bUserAssetLibraryOwner::Project;
+  }
+  if (library->extension_id[0]) {
+    return bUserAssetLibraryOwner::Extension;
+  }
+  return bUserAssetLibraryOwner::User;
+}
+
+bUserExtensionRepo *BKE_preferences_extension_asset_library_repo_get(
+    const UserDef *userdef, const bUserAssetLibrary *library)
+{
+  /* The repository module is the part before the first `.`, modules never contain one. */
+  char module[sizeof(bUserAssetLibrary::extension_id)];
+  STRNCPY(module, library->extension_id);
+  char *sep = strchr(module, '.');
+  if (sep == nullptr) {
+    return nullptr;
+  }
+  *sep = '\0';
+  return BKE_preferences_extension_repo_find_by_module(userdef, module);
 }
 
 /**
  * Appends a slash to \a str if there isn't one there already. Will do nothing if \a str is empty.
- *
- * \param max_len: The maximum length \a str is allowed to have, including 0-terminator.
  */
-static void url_ensure_trailing_slash(char *str, const size_t max_len)
+static void url_ensure_trailing_slash(MutableCStr str)
 {
-  const size_t len = BLI_strnlen(str, max_len);
+  const size_t len = STRNLEN(str);
   BLI_assert_msg(str[len] == '\0', "String should be null-terminated");
 
-  if (len > 0 && str[len - 1] != '/' && len + 1 < max_len) {
+  if (len > 0 && str[len - 1] != '/' && len + 1 < str.size()) {
     str[len] = '/';
     str[len + 1] = '\0';
   }
@@ -234,7 +336,7 @@ void BKE_preferences_remote_asset_library_url_set(bUserAssetLibrary *library,
       library->remote_url);
 
   if (!ends_in_top_meta_file) {
-    url_ensure_trailing_slash(library->remote_url, sizeof(library->remote_url));
+    url_ensure_trailing_slash(library->remote_url);
   }
 
   /* Update location cache path. */
@@ -245,7 +347,15 @@ void BKE_preferences_remote_asset_library_url_set(bUserAssetLibrary *library,
            * requests, and only downloads file to one of the directories. */
           std::string{asset_system::online_essentials_cache_directory_path()} :
           asset_system::remote_library_cache_directory_path_from_url(remote_url);
-  BLI_strncpy_utf8(library->dirpath, library_dirpath.c_str(), sizeof(library->dirpath));
+  STRNCPY(library->dirpath, library_dirpath.c_str());
+  STRNCPY(library->resolved_dirpath, AS_asset_library_resolve_path(library->dirpath).c_str());
+}
+
+void BKE_preferences_remote_asset_library_auth_token_set(bUserAssetLibrary *library,
+                                                         const StringRef auth_token)
+{
+  const StringRef auth_token_trimmed = StringRef{auth_token}.trim();
+  library->auth_token = BLI_strdupn(auth_token_trimmed.data(), auth_token_trimmed.size());
 }
 
 /** \} */
@@ -257,9 +367,9 @@ void BKE_preferences_remote_asset_library_url_set(bUserAssetLibrary *library,
 /**
  * A string copy that ensures: `[A-Za-z]+[A-Za-z0-9_]*`.
  */
-static size_t strncpy_py_module(char *dst, const char *src, const size_t dst_maxncpy)
+static size_t strncpy_py_module(MutableCStr dst, const char *src)
 {
-  const size_t dst_len_max = dst_maxncpy - 1;
+  const size_t dst_len_max = dst.size() - 1;
   dst[0] = '\0';
   size_t i_src = 0, i_dst = 0;
   while (src[i_src] && (i_dst < dst_len_max)) {
@@ -376,7 +486,7 @@ void BKE_preferences_extension_repo_module_set(UserDef *userdef,
                                                bUserExtensionRepo *repo,
                                                const char *module)
 {
-  if (strncpy_py_module(repo->module, module, sizeof(repo->module)) == 0) {
+  if (strncpy_py_module(repo->module, module) == 0) {
     STRNCPY(repo->module, "repository");
   }
 
@@ -393,7 +503,7 @@ bool BKE_preferences_extension_repo_module_is_valid(const bUserExtensionRepo *re
   /* NOTE: this should only ever return false in the case of corrupt file/memory
    * and can be considered an exceptional situation. */
   char module_test[sizeof(bUserExtensionRepo::module)];
-  const size_t module_len = strncpy_py_module(module_test, repo->module, sizeof(repo->module));
+  const size_t module_len = strncpy_py_module(module_test, repo->module);
   if (module_len == 0) {
     return false;
   }
@@ -409,11 +519,10 @@ void BKE_preferences_extension_repo_custom_dirpath_set(bUserExtensionRepo *repo,
 }
 
 size_t BKE_preferences_extension_repo_dirpath_get(const bUserExtensionRepo *repo,
-                                                  char *dirpath,
-                                                  const int dirpath_maxncpy)
+                                                  MutableCStr dirpath)
 {
   if (repo->flag & USER_EXTENSION_REPO_FLAG_USE_CUSTOM_DIRECTORY) {
-    return BLI_strncpy_rlen(dirpath, repo->custom_dirpath, dirpath_maxncpy);
+    return STRNCPY_RLEN(dirpath, repo->custom_dirpath);
   }
 
   std::optional<std::string> path = std::nullopt;
@@ -439,17 +548,16 @@ size_t BKE_preferences_extension_repo_dirpath_get(const bUserExtensionRepo *repo
     dirpath[0] = '\0';
     return 0;
   }
-  return BLI_path_join(dirpath, dirpath_maxncpy, path.value().c_str(), repo->module);
+  return BLI_path_join(dirpath, path.value().c_str(), repo->module);
 }
 
 size_t BKE_preferences_extension_repo_user_dirpath_get(const bUserExtensionRepo *repo,
-                                                       char *dirpath,
-                                                       const int dirpath_maxncpy)
+                                                       MutableCStr dirpath)
 {
   if (std::optional<std::string> path = BKE_appdir_folder_id_user_notest(BLENDER_USER_EXTENSIONS,
                                                                          nullptr))
   {
-    return BLI_path_join(dirpath, dirpath_maxncpy, path.value().c_str(), ".user", repo->module);
+    return BLI_path_join(dirpath, path.value().c_str(), ".user", repo->module);
   }
   return 0;
 }
@@ -713,6 +821,19 @@ bool BKE_preferences_asset_shelf_settings_ensure_catalog_path_enabled(UserDef *u
   bUserAssetShelfSettings *settings = asset_shelf_settings_ensure(userdef, shelf_idname);
   BKE_asset_catalog_path_list_add_path(settings->enabled_catalog_paths, catalog_path);
   return true;
+}
+
+bool BKE_preferences_asset_shelf_settings_disable_catalog_path(UserDef *userdef,
+                                                               const char *shelf_idname,
+                                                               const char *catalog_path)
+{
+  bUserAssetShelfSettings *settings = BKE_preferences_asset_shelf_settings_get(userdef,
+                                                                               shelf_idname);
+  if (!settings) {
+    return false;
+  }
+
+  return BKE_asset_catalog_path_list_remove_path(settings->enabled_catalog_paths, catalog_path);
 }
 
 /** \} */

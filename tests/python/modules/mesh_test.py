@@ -117,7 +117,7 @@ class OperatorSpecEditMode:
             select_history: bool = False,
     ):
         """
-        Constructs an OperatorSpecEditMode. Raises ValueError if selec_mode is invalid.
+        Constructs an OperatorSpecEditMode. Raises ValueError if select_mode is invalid.
 
         :param operator_name: str - name of mesh operator from bpy.ops.mesh, e.g. "bevel" or "fill"
         :param operator_parameters: dict - {name : val} dictionary containing operator parameters.
@@ -366,7 +366,7 @@ class MeshTest(ABC):
         :arg: selection: sequence - indices of selection.
         :arg: select_history: bool - load selection into bmesh selection history
 
-        Example: select_mode='VERT' and selection={1,2,3} selects veritces 1, 2 and 3 of input mesh
+        Example: select_mode='VERT' and selection={1,2,3} selects vertices 1, 2 and 3 of input mesh
         """
         if select_history and isinstance(selection, set):
             raise Exception("'selection' must be an ordered sequence, not a 'set' type when 'select_history=True'")
@@ -819,8 +819,15 @@ class BlendFileTest(MeshTest):
 
     def __init__(self, test_object_name, exp_object_name, threshold=None):
         super().__init__(test_object_name, exp_object_name, threshold=threshold)
-        if bpy.data.objects[test_object_name].get("allow_index_change"):
+        test_object = bpy.data.objects[test_object_name]
+        if test_object.get("allow_index_change"):
             self.allow_index_change = True
+        # Some tests need a looser comparison than the default, for example simulations where
+        # tiny floating point differences between platforms are amplified over many solver
+        # iterations. Those files can override the threshold with a custom property.
+        threshold_override = test_object.get("threshold")
+        if threshold_override is not None:
+            self.threshold = float(threshold_override)
 
     def apply_operations(self, evaluated_test_object_name):
         BlendFileTest.apply_operations.__doc__ = MeshTest.apply_operations.__doc__

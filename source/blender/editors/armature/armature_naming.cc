@@ -18,7 +18,9 @@
 
 #include "BLI_ghash.hh"
 #include "BLI_listbase_wrapper.hh"
+#include "BLI_map.hh"
 #include "BLI_string.hh"
+#include "BLI_string_ref.hh"
 #include "BLI_string_utf8.hh"
 #include "BLI_string_utils.hh"
 #include "BLI_utildefines.hh"
@@ -86,8 +88,7 @@ void ED_armature_ebone_unique_name(ListBaseT<EditBone> *ebones, char *name, Edit
       },
       DATA_(animrig::bone_default_name),
       '.',
-      name,
-      sizeof(bone->name));
+      MutableCStr(name, sizeof(bone->name)));
 }
 
 /** \} */
@@ -104,8 +105,7 @@ static void ed_armature_bone_unique_name(bArmature *arm, char *name)
       },
       DATA_(animrig::bone_default_name),
       '.',
-      name,
-      sizeof(Bone::name));
+      MutableCStr(name, sizeof(Bone::name)));
 }
 
 /** \} */
@@ -222,24 +222,23 @@ void ED_armature_bone_rename(Main *bmain,
   Object *ob;
   /* Find all uses of the bone name in Main. Bones are usually referred to by name which is why we
    * need to fix the string in all possible places.  */
-  for (ob = static_cast<Object *>(bmain->objects.first); ob;
-       ob = static_cast<Object *>(ob->id.next))
-  {
+  for (ob = bmain->objects.first(); ob; ob = static_cast<Object *>(ob->id.next)) {
     /* We have an object using the armature. */
     if (id_cast<const ID *>(arm) == ob->data) {
       /* Rename the pose channel, if it exists */
       if (ob->pose) {
         bPoseChannel *pchan = BKE_pose_channel_find_name(ob->pose, oldname);
         if (pchan) {
-          GHash *gh = ob->pose->chanhash;
-          if (gh) {
-            BLI_assert(BLI_ghash_haskey(gh, pchan->name));
-            BLI_ghash_remove(gh, pchan->name, nullptr, nullptr);
+          Map<StringRef, bPoseChannel *> &chanhash = ob->pose->runtime->chanhash;
+          const bool has_hash = !chanhash.is_empty();
+          if (has_hash) {
+            BLI_assert(chanhash.contains(pchan->name));
+            chanhash.remove(pchan->name);
           }
           STRNCPY_UTF8(pchan->name, newname);
-          if (gh) {
-            BLI_assert(!BLI_ghash_haskey(gh, pchan->name));
-            BLI_ghash_insert(gh, pchan->name, pchan);
+          if (has_hash) {
+            BLI_assert(!chanhash.contains(pchan->name));
+            chanhash.add_new(pchan->name, pchan);
           }
 
           BKE_animdata_fix_paths(
@@ -251,10 +250,8 @@ void ED_armature_bone_rename(Main *bmain,
 
       Object *cob;
       /* Update any object constraints to use the new bone name */
-      for (cob = static_cast<Object *>(bmain->objects.first); cob;
-           cob = static_cast<Object *>(cob->id.next))
-      {
-        if (cob->constraints.first) {
+      for (cob = bmain->objects.first(); cob; cob = static_cast<Object *>(cob->id.next)) {
+        if (cob->constraints.first_) {
           constraint_bone_name_fix(ob, cob, &cob->constraints, oldname, newname);
         }
         if (cob->pose) {
@@ -373,8 +370,7 @@ void ED_armature_bone_rename(Main *bmain,
   /* correct view locking */
   {
     bScreen *screen;
-    for (screen = static_cast<bScreen *>(bmain->screens.first); screen;
-         screen = static_cast<bScreen *>(screen->id.next))
+    for (screen = bmain->screens.first(); screen; screen = static_cast<bScreen *>(screen->id.next))
     {
       /* add regions */
       for (ScrArea &area : screen->areabase) {
@@ -423,7 +419,7 @@ void ED_armature_bones_flip_names(Main *bmain,
 
     /* WARNING: if do_strip_numbers is set, expect completely mismatched names in cases like
      * Bone.R, Bone.R.001, Bone.R.002, etc. */
-    BLI_string_flip_side_name(name_flip, name, do_strip_numbers, sizeof(name_flip));
+    BLI_string_flip_side_name(name_flip, name, do_strip_numbers);
 
     ED_armature_bone_rename(bmain, arm, name, name_flip);
 

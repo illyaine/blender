@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "BLI_span.hh"
+
 #include "WM_types.hh"
 
 namespace blender {
@@ -74,14 +76,12 @@ void ED_region_draw_mouse_line_cb(const bContext *C, ARegion *region, void *arg_
 void ED_region_image_metadata_draw(
     int x, int y, const ImBuf *ibuf, const rctf *frame, float zoomx, float zoomy);
 
-void ED_region_image_overlay_info_text_draw(const int render_size_x,
-                                            const int render_size_y,
-
-                                            const int viewer_size_x,
-                                            const int viewer_size_y,
-
-                                            const int draw_offset_x,
-                                            const int draw_offset_y);
+void ED_region_overlay_info_text_draw(const int render_size_x,
+                                      const int render_size_y,
+                                      const int viewer_size_x,
+                                      const int viewer_size_y,
+                                      const int draw_offset_x,
+                                      const int draw_offset_y);
 
 void ED_region_render_region_draw(
     int x, int y, const rcti *frame, float zoomx, float zoomy, float passepartout_alpha);
@@ -105,9 +105,7 @@ void ED_slider_destroy(bContext *C, tSlider *slider);
 /**
  * Return string based on the current state of the slider.
  */
-void ED_slider_status_string_get(const tSlider *slider,
-                                 char *status_string,
-                                 size_t size_of_status_string);
+void ED_slider_status_string_get(const tSlider *slider, MutableCStr status_string);
 
 void ED_slider_status_get(const tSlider *slider, WorkspaceStatus &status);
 

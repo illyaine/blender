@@ -227,6 +227,9 @@ static wmOperatorStatus screen_render_exec(bContext *C, wmOperator *op)
     return OPERATOR_CANCELLED;
   }
 
+  /* Flush sculpt and editmode changes. */
+  ED_editors_flush_edits(mainp);
+
   re = RE_NewSceneRender(scene);
 
   G.is_break = false;
@@ -239,6 +242,8 @@ static wmOperatorStatus screen_render_exec(bContext *C, wmOperator *op)
   BKE_image_backup_render(scene, ima, true);
 
   RE_SetReports(re, op->reports);
+
+  ED_render_view3d_auto_pause(mainp, true);
 
   if (is_animation) {
     RE_RenderAnim(re,
@@ -262,6 +267,8 @@ static wmOperatorStatus screen_render_exec(bContext *C, wmOperator *op)
   }
 
   RE_SetReports(re, nullptr);
+
+  ED_render_view3d_auto_pause(mainp, false);
 
   const bool cancelled = G.is_break;
 
@@ -336,8 +343,7 @@ static void make_renderinfo_string(const RenderStats *rs,
 
   /* Previous and elapsed time. */
   const char *info_time = info_buffers.time_last;
-  BLI_timecode_string_from_time_simple(
-      info_buffers.time_last, sizeof(info_buffers.time_last), rs->lastframetime);
+  BLI_timecode_string_from_time_simple(info_buffers.time_last, rs->lastframetime);
 
   ret_array[i++] = info_sep;
   if (rs->infostr && rs->infostr[0]) {
@@ -349,7 +355,6 @@ static void make_renderinfo_string(const RenderStats *rs,
 
     info_time = info_buffers.time_elapsed;
     BLI_timecode_string_from_time_simple(info_buffers.time_elapsed,
-                                         sizeof(info_buffers.time_elapsed),
                                          BLI_time_now_seconds() - rs->starttime);
   }
 
@@ -410,7 +415,7 @@ static void make_renderinfo_string(const RenderStats *rs,
   }
 
   BLI_assert(i < int(BOUNDED_ARRAY_TYPE_SIZE<decltype(ret_array)>()));
-  BLI_string_join_array(ret, IMA_MAX_RENDER_TEXT_SIZE, ret_array, i);
+  BLI_string_join_array(MutableCStr(ret, IMA_MAX_RENDER_TEXT_SIZE), ret_array, i);
 }
 
 static void image_renderinfo_cb(void *rjv, RenderStats *rs)
@@ -463,19 +468,16 @@ static void render_image_update_pass_and_layer(RenderJob *rj, RenderResult *rr, 
   /* image window, compo node users */
 
   /* Only ever 1 `wm`. */
-  for (wmWindowManager *wm = static_cast<wmWindowManager *>(rj->main->wm.first);
-       wm && matched_area == nullptr;
+  for (wmWindowManager *wm = rj->main->wm.first(); wm && matched_area == nullptr;
        wm = static_cast<wmWindowManager *>(wm->id.next))
   {
     wmWindow *win;
-    for (win = static_cast<wmWindow *>(wm->windows.first); win && matched_area == nullptr;
-         win = win->next)
-    {
+    for (win = wm->windows.first(); win && matched_area == nullptr; win = win->next) {
       const bScreen *screen = WM_window_get_active_screen(win);
 
       for (ScrArea &area : screen->areabase) {
         if (area.spacetype == SPACE_IMAGE) {
-          SpaceImage *sima = static_cast<SpaceImage *>(area.spacedata.first);
+          SpaceImage *sima = area.spacedata.first_as<SpaceImage>();
           /* area->spacedata might be empty when toggling full-screen mode. */
           if (sima != nullptr && sima->image == rj->image) {
             if (first_area == nullptr) {
@@ -496,7 +498,7 @@ static void render_image_update_pass_and_layer(RenderJob *rj, RenderResult *rr, 
   }
 
   if (matched_area) {
-    SpaceImage *sima = static_cast<SpaceImage *>(matched_area->spacedata.first);
+    SpaceImage *sima = matched_area->spacedata.first_as<SpaceImage>();
     RenderResult *main_rr = RE_AcquireResultRead(rj->re);
 
     /* TODO(sergey): is there faster way to get the layer index? */
@@ -598,7 +600,7 @@ static void render_image_restore_scene_and_layer(RenderJob *rj)
       for (ScrArea &area : screen->areabase) {
         if (&area == rj->area) {
           if (area.spacetype == SPACE_IMAGE) {
-            SpaceImage *sima = static_cast<SpaceImage *>(area.spacedata.first);
+            SpaceImage *sima = area.spacedata.first_as<SpaceImage>();
 
             /* Automatically show scene we just rendered. */
             SET_FLAG_FROM_TEST(
@@ -641,7 +643,7 @@ static void render_endjob(void *rjv)
   /* Update depsgraph for returning to the original frame before animation render job. */
   if (rj->anim && !(rj->scene->r.scemode & R_NO_FRAME_UPDATE)) {
     /* Possible this fails when loading new file while rendering. */
-    if (G_MAIN->wm.first) {
+    if (G_MAIN->wm.first_) {
       /* Check view layer was not deleted during render. Technically another view layer
        * may get allocated with the same pointer, but worst case it will cause an
        * unnecessary update. */
@@ -670,6 +672,7 @@ static void render_endjob(void *rjv)
   /* XXX render stability hack */
   G.is_rendering = false;
   WM_main_add_notifier(NC_SCENE | ND_RENDER_RESULT, nullptr);
+  DEG_id_tag_update(&rj->scene->id, ID_RECALC_COMPOSITOR);
 
   /* Finally unlock the user interface (if it was locked). */
   if (rj->interface_locked) {
@@ -677,9 +680,12 @@ static void render_endjob(void *rjv)
      * and using one from Global will unlock exactly the same manager as
      * was locked before running the job.
      */
-    WM_locked_interface_set(static_cast<wmWindowManager *>(G_MAIN->wm.first), false);
+    WM_locked_interface_set(G_MAIN->wm.first(), false);
     DEG_tag_on_visible_update(G_MAIN, false);
   }
+
+  /* Resume viewport render engines now that the final render is complete. */
+  ED_render_view3d_auto_pause(G_MAIN, false);
 }
 
 /* called by render, check job 'stop' value or the global */
@@ -726,7 +732,7 @@ static wmOperatorStatus screen_render_modal(bContext *C, wmOperator *op, const w
   Scene *scene = static_cast<Scene *>(op->customdata);
 
   /* no running blender, remove handler and pass through */
-  if (0 == WM_jobs_test(CTX_wm_manager(C), scene, WM_JOB_TYPE_RENDER)) {
+  if (!WM_jobs_has_running(CTX_wm_manager(C), scene, WM_JOB_TYPE_RENDER)) {
     return OPERATOR_FINISHED | OPERATOR_PASS_THROUGH;
   }
 
@@ -846,7 +852,7 @@ static wmOperatorStatus screen_render_invoke(bContext *C, wmOperator *op, const 
   }
 
   /* only one render job at a time */
-  if (WM_jobs_test(CTX_wm_manager(C), scene, WM_JOB_TYPE_RENDER)) {
+  if (WM_jobs_has_running(CTX_wm_manager(C), scene, WM_JOB_TYPE_RENDER)) {
     return OPERATOR_CANCELLED;
   }
 
@@ -881,7 +887,7 @@ static wmOperatorStatus screen_render_invoke(bContext *C, wmOperator *op, const 
   /* handle UI stuff */
   WM_cursor_wait(true);
 
-  /* flush sculpt and editmode changes */
+  /* Flush sculpt and editmode changes. */
   ED_editors_flush_edits(bmain);
 
   /* store spare
@@ -914,7 +920,7 @@ static wmOperatorStatus screen_render_invoke(bContext *C, wmOperator *op, const 
   BKE_color_managed_view_settings_copy(&rj->view_settings, &scene->view_settings);
 
   if (area) {
-    SpaceImage *sima = static_cast<SpaceImage *>(area->spacedata.first);
+    SpaceImage *sima = area->spacedata.first_as<SpaceImage>();
     rj->orig_layer = sima->iuser.layer;
   }
 
@@ -990,6 +996,9 @@ static wmOperatorStatus screen_render_invoke(bContext *C, wmOperator *op, const 
    * the reason of this is that active scene could change when rendering
    * several layers from compositor #31800. */
   op->customdata = scene;
+
+  /* Pause viewport render engines for the duration of the final render. */
+  ED_render_view3d_auto_pause(bmain, true);
 
   WM_jobs_start(CTX_wm_manager(C), wm_job);
 

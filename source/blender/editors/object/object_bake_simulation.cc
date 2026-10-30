@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup edobj
+ */
+
 #include <sstream>
 
 #include "BLI_fileops.hh"
@@ -33,6 +37,7 @@
 #include "BKE_node_legacy_types.hh"
 #include "BKE_node_runtime.hh"
 #include "BKE_packedFile.hh"
+#include "BKE_path_templates.hh"
 #include "BKE_report.hh"
 #include "BKE_scene.hh"
 
@@ -191,7 +196,8 @@ static wmOperatorStatus simulate_to_frame_modal(bContext *C,
                                                 wmOperator * /*op*/,
                                                 const wmEvent * /*event*/)
 {
-  if (!WM_jobs_test(CTX_wm_manager(C), CTX_data_scene(C), WM_JOB_TYPE_CALCULATE_SIMULATION_NODES))
+  if (!WM_jobs_has_running(
+          CTX_wm_manager(C), CTX_data_scene(C), WM_JOB_TYPE_CALCULATE_SIMULATION_NODES))
   {
     return OPERATOR_FINISHED | OPERATOR_PASS_THROUGH;
   }
@@ -332,10 +338,8 @@ static void bake_geometry_nodes_startjob(void *customdata, wmJobWorkerStatus *wo
 
       if (request.path.has_value()) {
         char meta_path[FILE_MAX];
-        BLI_path_join(meta_path,
-                      sizeof(meta_path),
-                      request.path->meta_dir.c_str(),
-                      (frame_file_name + ".json").c_str());
+        BLI_path_join(
+            meta_path, request.path->meta_dir.c_str(), (frame_file_name + ".json").c_str());
         BLI_file_ensure_parent_dir_exists(meta_path);
         bake::DiskBlobWriter blob_writer{request.path->blobs_dir, frame_file_name};
         fstream meta_file{meta_path, std::ios::out};
@@ -722,9 +726,9 @@ struct PathStringEquality {
 static bool bake_directory_has_data(const StringRefNull absolute_bake_dir)
 {
   char meta_dir[FILE_MAX];
-  BLI_path_join(meta_dir, sizeof(meta_dir), absolute_bake_dir.c_str(), "meta");
+  BLI_path_join(meta_dir, absolute_bake_dir.c_str(), "meta");
   char blobs_dir[FILE_MAX];
-  BLI_path_join(blobs_dir, sizeof(blobs_dir), absolute_bake_dir.c_str(), "blobs");
+  BLI_path_join(blobs_dir, absolute_bake_dir.c_str(), "blobs");
 
   if (!BLI_is_dir(meta_dir) || !BLI_is_dir(blobs_dir)) {
     return false;
@@ -768,7 +772,8 @@ static void initialize_modifier_bake_directory_if_necessary(bContext *C,
               nmd.modifier.name);
 
   nmd.bake_directory = BLI_strdup(
-      bake::get_default_modifier_bake_directory(*bmain, object, nmd).c_str());
+      BKE_path_template_escape(bake::get_default_modifier_bake_directory(*bmain, object, nmd))
+          .c_str());
 }
 
 static void bake_simulation_validate_paths(bContext *C,
@@ -806,8 +811,6 @@ static PathUsersMap bake_simulation_get_path_users(bContext *C, const Span<Objec
 
   PathUsersMap path_users;
   for (const Object *object : objects) {
-    const char *base_path = ID_BLEND_PATH(bmain, &object->id);
-
     for (const ModifierData &md : object->modifiers) {
       if (md.type != eModifierType_Nodes) {
         continue;
@@ -835,15 +838,14 @@ static PathUsersMap bake_simulation_get_path_users(bContext *C, const Span<Objec
         continue;
       }
 
-      if (StringRef(nmd->bake_directory).is_empty()) {
+      const std::optional<std::string> modifier_bake_dir = bake::get_modifier_bake_path(
+          *bmain, *object, *nmd);
+      if (!modifier_bake_dir) {
         continue;
       }
 
-      char absolute_bake_dir[FILE_MAX];
-      STRNCPY(absolute_bake_dir, nmd->bake_directory);
-      BLI_path_abs(absolute_bake_dir, base_path);
       path_users.add_or_modify(
-          absolute_bake_dir, [](int *value) { *value = 1; }, [](int *value) { ++(*value); });
+          *modifier_bake_dir, [](int *value) { *value = 1; }, [](int *value) { ++(*value); });
     }
   }
 
@@ -911,7 +913,8 @@ static wmOperatorStatus bake_simulation_modal(bContext *C,
                                               wmOperator * /*op*/,
                                               const wmEvent * /*event*/)
 {
-  if (!WM_jobs_test(CTX_wm_manager(C), CTX_data_scene(C), WM_JOB_TYPE_BAKE_GEOMETRY_NODES)) {
+  if (!WM_jobs_has_running(CTX_wm_manager(C), CTX_data_scene(C), WM_JOB_TYPE_BAKE_GEOMETRY_NODES))
+  {
     return OPERATOR_FINISHED | OPERATOR_PASS_THROUGH;
   }
   return OPERATOR_PASS_THROUGH;
@@ -1060,7 +1063,8 @@ static wmOperatorStatus bake_single_node_modal(bContext *C,
                                                wmOperator * /*op*/,
                                                const wmEvent * /*event*/)
 {
-  if (!WM_jobs_test(CTX_wm_manager(C), CTX_data_scene(C), WM_JOB_TYPE_BAKE_GEOMETRY_NODES)) {
+  if (!WM_jobs_has_running(CTX_wm_manager(C), CTX_data_scene(C), WM_JOB_TYPE_BAKE_GEOMETRY_NODES))
+  {
     return OPERATOR_FINISHED | OPERATOR_PASS_THROUGH;
   }
   return OPERATOR_PASS_THROUGH;

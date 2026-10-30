@@ -360,8 +360,7 @@ void BKE_main_namemap_clear(Main &bmain)
   auto bmain_namemap_clear = [](Main *bmain_iter) -> void {
     BKE_main_namemap_destroy(&bmain_iter->name_map);
     BKE_main_namemap_destroy(&bmain_iter->name_map_global);
-    for (Library *lib_iter = static_cast<Library *>(bmain_iter->libraries.first);
-         lib_iter != nullptr;
+    for (Library *lib_iter = bmain_iter->libraries.first(); lib_iter != nullptr;
          lib_iter = static_cast<Library *>(lib_iter->id.next))
     {
       BKE_main_namemap_destroy(&lib_iter->runtime->name_map);
@@ -511,7 +510,7 @@ static bool id_name_final_build(UniqueName_TypeMap &type_map,
    * reached. */
   CLOG_ERROR(&LOG,
              "Impossible to find an available name for '%s' base name, even by editing that base "
-             "name. This should never happen in real-life scenarii. Now trying to brute-force "
+             "name. This should never happen in real-life scenarios. Now trying to brute-force "
              "generate random names until a free one is found.",
              base_name.c_str());
   BLI_assert(new_base_name.size() <= 8);
@@ -759,7 +758,7 @@ static bool main_namemap_validate_and_fix(Main &bmain, const bool do_fix)
       }
     }
 
-    lib = static_cast<Library *>((lib == nullptr) ? bmain.libraries.first : lib->id.next);
+    lib = static_cast<Library *>((lib == nullptr) ? bmain.libraries.first() : lib->id.next);
     name_map = (lib != nullptr) ? lib->runtime->name_map : nullptr;
   } while (lib != nullptr);
 

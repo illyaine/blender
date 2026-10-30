@@ -16,6 +16,8 @@
 #include "BLI_string.hh"
 #include "BLI_sys_types.hh" /* for bool */
 
+#include "RNA_path_fwd.hh"
+
 #include <string>
 
 namespace blender {
@@ -127,14 +129,16 @@ void BKE_keyingsets_blend_read_data(BlendDataReader *reader, ListBaseT<KeyingSet
  * This is just an external wrapper for the RNA-Path fixing function,
  * with input validity checks on top of the basic method.
  *
- * \warning If the path fixing was successful, `old_path` will be freed after this function.
- * Always use the returned char * to update whatever was passed in as `old_path`.
+ * \return The new path, to be owned by the caller, or nullptr if the path should not be changed.
  *
  * \note it is assumed that the structure we're replacing is `<prefix><["><name><"]>`
  * i.e. `pose.bones["Bone"]`.
  */
-char *BKE_animsys_fix_rna_path_rename(
-    ID *owner_id, char *old_path, StringRef prefix, StringRefNull old_name, StringRefNull newName);
+char *BKE_animsys_fix_rna_path_rename(ID *owner_id,
+                                      const char *old_path,
+                                      StringRef prefix,
+                                      StringRefNull old_name,
+                                      StringRefNull newName);
 
 /**
  * Fix all the paths for the given ID + Action.
@@ -303,7 +307,7 @@ enum eAnimData_Recalc {
 };
 
 bool BKE_animsys_rna_path_resolve(PointerRNA *ptr,
-                                  const char *rna_path,
+                                  ParsedRNAPathRef rna_path,
                                   int array_index,
                                   PathResolvedRNA *r_result);
 bool BKE_animsys_read_from_rna_path(PathResolvedRNA *anim_rna, float *r_value);
@@ -348,15 +352,6 @@ void animsys_evaluate_action(PointerRNA *ptr,
                              const AnimationEvalContext *anim_eval_context,
                              bool flush_to_original);
 
-/**
- * Evaluate action, and blend the result into the current values (instead of overwriting fully).
- */
-void animsys_blend_in_action(PointerRNA *ptr,
-                             bAction *act,
-                             int32_t action_slot_handle,
-                             const AnimationEvalContext *anim_eval_context,
-                             float blend_factor);
-
 /** Evaluate Action Group. */
 void animsys_evaluate_action_group(PointerRNA *ptr,
                                    bAction *act,
@@ -379,7 +374,16 @@ void BKE_time_markers_blend_write(BlendWriter *writer, ListBaseT<TimeMarker> &ma
 void BKE_time_markers_blend_read(BlendDataReader *reader, ListBaseT<TimeMarker> &markers);
 
 /**
- * Copy a list of time markers.
+ * Copy a time marker and its ID properties.
+ *
+ * Note: this is meant to be called in the context of duplicating an ID.
+ *
+ * \param flag: ID copy flags. Corresponds to the `flag` parameter of `BKE_id_copy_ex()`.
+ */
+TimeMarker *BKE_copy_time_marker(const TimeMarker &marker_src, int flag);
+
+/**
+ * Copy a list of time markers and their ID properties.
  *
  * Note: this is meant to be called in the context of duplicating an ID.
  *
@@ -388,5 +392,8 @@ void BKE_time_markers_blend_read(BlendDataReader *reader, ListBaseT<TimeMarker> 
 void BKE_copy_time_markers(ListBaseT<TimeMarker> &markers_dst,
                            const ListBaseT<TimeMarker> &markers_src,
                            int flag);
+
+void BKE_free_time_marker(TimeMarker &marker, bool do_id_user);
+void BKE_free_time_markers(ListBaseT<TimeMarker> &markers, bool do_id_user);
 
 }  // namespace blender

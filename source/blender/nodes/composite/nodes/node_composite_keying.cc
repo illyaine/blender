@@ -250,7 +250,9 @@ class KeyingOperation : public NodeOperation {
 
   int get_preprocess_blur_size()
   {
-    return math::max(0, this->get_input("Preprocess Blur Size").get_single_value_default<int>());
+    const float pixel_size = math::average(this->get_input("Image").domain().pixel_size);
+    const int size = this->get_input("Preprocess Blur Size").get_single_value_default<int>();
+    return math::max(0, int(size * pixel_size));
   }
 
   Result extract_input_chroma()
@@ -396,7 +398,7 @@ class KeyingOperation : public NodeOperation {
     input.bind_as_texture(shader, "input_tx");
 
     Result &key_color = get_input("Key Color");
-    key_color.bind_as_texture(shader, "key_tx");
+    gpu::Texture *key_color_texture = key_color.bind_as_texture_or_single_value(shader, "key_tx");
 
     Result output = context().create_result(ResultType::Float);
     output.allocate_texture(input.domain());
@@ -406,7 +408,7 @@ class KeyingOperation : public NodeOperation {
 
     GPU_shader_unbind();
     input.unbind_as_texture();
-    key_color.unbind_as_texture();
+    key_color.unbind_as_texture_or_single_value(key_color_texture);
     output.unbind_as_image();
 
     return output;
@@ -515,10 +517,12 @@ class KeyingOperation : public NodeOperation {
     input_matte.bind_as_texture(shader, "input_matte_tx");
 
     Result &garbage_matte = get_input("Garbage Matte");
-    garbage_matte.bind_as_texture(shader, "garbage_matte_tx");
+    gpu::Texture *garbage_matte_texture = garbage_matte.bind_as_texture_or_single_value(
+        shader, "garbage_matte_tx");
 
     Result &core_matte = get_input("Core Matte");
-    core_matte.bind_as_texture(shader, "core_matte_tx");
+    gpu::Texture *core_matte_texture = core_matte.bind_as_texture_or_single_value(shader,
+                                                                                  "core_matte_tx");
 
     Result output_matte = context().create_result(ResultType::Float);
     output_matte.allocate_texture(input_matte.domain());
@@ -534,8 +538,8 @@ class KeyingOperation : public NodeOperation {
 
     GPU_shader_unbind();
     input_matte.unbind_as_texture();
-    garbage_matte.unbind_as_texture();
-    core_matte.unbind_as_texture();
+    garbage_matte.unbind_as_texture_or_single_value(garbage_matte_texture);
+    core_matte.unbind_as_texture_or_single_value(core_matte_texture);
     output_matte.unbind_as_image();
     if (output_edges.should_compute()) {
       output_edges.unbind_as_image();
@@ -624,7 +628,9 @@ class KeyingOperation : public NodeOperation {
 
   int get_edge_search_size()
   {
-    return math::max(0, this->get_input("Edge Search Size").get_single_value_default<int>());
+    const float pixel_size = math::average(this->get_input("Image").domain().pixel_size);
+    const int size = this->get_input("Edge Search Size").get_single_value_default<int>();
+    return math::max(0, int(size * pixel_size));
   }
 
   float get_edge_tolerance()
@@ -666,7 +672,9 @@ class KeyingOperation : public NodeOperation {
 
   int get_postprocess_blur_size()
   {
-    return math::max(0, this->get_input("Postprocess Blur Size").get_single_value_default<int>());
+    const float pixel_size = math::average(this->get_input("Image").domain().pixel_size);
+    const int size = this->get_input("Postprocess Blur Size").get_single_value_default<int>();
+    return math::max(0, int(size * pixel_size));
   }
 
   Result compute_morphed_matte(Result &input_matte)
@@ -689,7 +697,9 @@ class KeyingOperation : public NodeOperation {
 
   int get_postprocess_dilate_size()
   {
-    return this->get_input("Postprocess Dilate Size").get_single_value_default<int>();
+    const float pixel_size = math::average(this->get_input("Image").domain().pixel_size);
+    const int size = this->get_input("Postprocess Dilate Size").get_single_value_default<int>();
+    return int(size * pixel_size);
   }
 
   Result compute_feathered_matte(Result &input_matte)
@@ -713,7 +723,9 @@ class KeyingOperation : public NodeOperation {
 
   int get_postprocess_feather_size()
   {
-    return this->get_input("Postprocess Feather Size").get_single_value_default<int>();
+    const float pixel_size = math::average(this->get_input("Image").domain().pixel_size);
+    const int size = this->get_input("Postprocess Feather Size").get_single_value_default<int>();
+    return int(size * pixel_size);
   }
 
   int get_feather_falloff()
@@ -743,7 +755,7 @@ class KeyingOperation : public NodeOperation {
     input.bind_as_texture(shader, "input_tx");
 
     Result &key = get_input("Key Color");
-    key.bind_as_texture(shader, "key_tx");
+    gpu::Texture *key_color_texture = key.bind_as_texture_or_single_value(shader, "key_tx");
 
     matte.bind_as_texture(shader, "matte_tx");
 
@@ -755,7 +767,7 @@ class KeyingOperation : public NodeOperation {
 
     GPU_shader_unbind();
     input.unbind_as_texture();
-    key.unbind_as_texture();
+    key.unbind_as_texture_or_single_value(key_color_texture);
     matte.unbind_as_texture();
     output.unbind_as_image();
   }

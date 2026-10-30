@@ -341,8 +341,7 @@ static void mesh_merge_transform(Mesh *result,
                                                                       bke::AttrDomain::Face))
   {
     bke::SpanAttributeWriter<int> result_material_indices =
-        result_attributes.lookup_or_add_for_write_span<int>("material_index",
-                                                            bke::AttrDomain::Face);
+        result_attributes.ensure_for_write_span<int>("material_index", bke::AttrDomain::Face);
     cap_material_indices.materialize(
         result_material_indices.span.slice(cap_faces_index, cap_nfaces));
     result_material_indices.finish();
@@ -846,9 +845,15 @@ static Mesh *arrayModifier_doArray(ArrayModifierData *amd,
       }
     }
     if (tot_doubles > 0) {
+      /* Vertex merging expects un-merged vertices to point at themselves rather than being -1. */
+      for (i = 0; i < result_nverts; i++) {
+        if (full_doubles_map[i] == -1) {
+          full_doubles_map[i] = i;
+        }
+      }
       Mesh *tmp = result;
       result = geometry::mesh_merge_verts(
-          *tmp, MutableSpan<int>{full_doubles_map, result->verts_num}, tot_doubles, false);
+          *tmp, Span<int>{full_doubles_map, result->verts_num}, tot_doubles, false);
       BKE_id_free(nullptr, tmp);
     }
     MEM_delete(full_doubles_map);

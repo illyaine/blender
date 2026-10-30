@@ -233,7 +233,7 @@ static void curve_blend_read_data(BlendDataReader *reader, ID *id)
     BLO_read_struct_list(reader, Nurb, &(cu->nurb));
   }
   else {
-    cu->nurb.first = cu->nurb.last = nullptr;
+    cu->nurb.first_ = cu->nurb.last_ = nullptr;
 
     if (cu->str == nullptr) [[unlikely]] {
       cu->len_char32 = 0;
@@ -317,6 +317,7 @@ IDTypeInfo IDType_ID_CU_LEGACY = {
     .foreach_cache = nullptr,
     .foreach_path = nullptr,
     .foreach_working_space_color = nullptr,
+    .foreach_asset_weak_reference = nullptr,
     .owner_pointer_get = nullptr,
 
     .blend_write = curve_blend_write,
@@ -3114,7 +3115,7 @@ static void calchandleNurb_intern(BezTriple *bezt,
   }
 
   if (prev == nullptr && next == nullptr) {
-    /* Single point, no need to calculat handles. */
+    /* Single point, no need to calculate handles. */
     return;
   }
 
@@ -4758,8 +4759,7 @@ bool BKE_nurb_valid_message(const int pnts,
                             const short type,
                             const bool is_surf,
                             const int dir,
-                            char *message_dst,
-                            const size_t maxncpy)
+                            MutableCStr message_dst)
 {
   int points_needed;
   NURBSValidationStatus status = nurb_check_valid(
@@ -4775,21 +4775,19 @@ bool BKE_nurb_valid_message(const int pnts,
         message_dst[0] = 0;
         return false;
       }
-      BLI_strncpy(message_dst, RPT_("At least two points required"), maxncpy);
+      STRNCPY(message_dst, RPT_("At least two points required"));
       break;
     case NURBSValidationStatus::MorePointsThanOrderRequired:
-      BLI_strncpy(message_dst, RPT_("Must have more control points than Order"), maxncpy);
+      STRNCPY(message_dst, RPT_("Must have more control points than Order"));
       break;
     case NURBSValidationStatus::MoreRowsForBezierRequired:
-      BLI_snprintf(message_dst,
-                   maxncpy,
-                   RPT_("%d more %s row(s) needed for Bézier"),
-                   points_needed,
-                   dir == 0 ? "U" : "V");
+      SNPRINTF(message_dst,
+               RPT_("%d more %s row(s) needed for Bézier"),
+               points_needed,
+               dir == 0 ? "U" : "V");
       break;
     case NURBSValidationStatus::MorePointsForBezierRequired:
-      BLI_snprintf(
-          message_dst, maxncpy, RPT_("%d more point(s) needed for Bézier"), points_needed);
+      SNPRINTF(message_dst, RPT_("%d more point(s) needed for Bézier"), points_needed);
       break;
   }
 

@@ -30,6 +30,7 @@
 #include "UI_view2d.hh"
 
 #include "transform.hh"
+#include "transform_constraints.hh"
 #include "transform_convert.hh"
 #include "transform_mode.hh"
 #include "transform_snap.hh"
@@ -159,15 +160,13 @@ static void transdata_elem_translate(const TransInfo *t,
 /** \name Transform (Translation) Header
  * \{ */
 
-static void translate_dist_to_str(char *r_str,
-                                  const int r_str_maxncpy,
+static void translate_dist_to_str(MutableCStr r_str,
                                   const float val,
                                   const UnitSettings &unit,
                                   const bool high_precision)
 {
   const int precision = high_precision ? 6 : 4;
-  BKE_unit_value_as_string_scaled(
-      r_str, r_str_maxncpy, val, precision * -1, B_UNIT_LENGTH, unit, false, true);
+  BKE_unit_value_as_string_scaled(r_str, val, precision * -1, B_UNIT_LENGTH, unit, false, true);
 }
 
 static void headerTranslation(TransInfo *t, const float vec[3], char str[UI_MAX_DRAW_STR])
@@ -225,18 +224,16 @@ static void headerTranslation(TransInfo *t, const float vec[3], char str[UI_MAX_
     for (int i = 0; i < 3; i++) {
       char temp_vec_str[NUM_STR_REP_LEN];
 
-      translate_dist_to_str(
-          temp_vec_str, sizeof(temp_vec_str), dvec[i], unit, t->modifiers & MOD_PRECISION);
+      translate_dist_to_str(temp_vec_str, dvec[i], unit, t->modifiers & MOD_PRECISION);
       STRNCPY_UTF8(dvec_str[i], BLI_string_pad_number_sign(temp_vec_str).c_str());
     }
   }
 
-  translate_dist_to_str(dist_str, sizeof(dist_str), dist, unit, t->modifiers & MOD_PRECISION);
+  translate_dist_to_str(dist_str, dist, unit, t->modifiers & MOD_PRECISION);
 
   if (t->flag & T_PROP_EDIT_ALL) {
     char prop_str[NUM_STR_REP_LEN];
-    translate_dist_to_str(
-        prop_str, sizeof(prop_str), t->prop_size, unit, t->modifiers & MOD_PRECISION);
+    translate_dist_to_str(prop_str, t->prop_size, unit, t->modifiers & MOD_PRECISION);
 
     ofs += BLI_snprintf_utf8_rlen(str + ofs,
                                   UI_MAX_DRAW_STR - ofs,
@@ -284,7 +281,7 @@ static void headerTranslation(TransInfo *t, const float vec[3], char str[UI_MAX_
   }
   else {
     if (t->spacetype == SPACE_NODE) {
-      SpaceNode *snode = static_cast<SpaceNode *>(t->area->spacedata.first);
+      SpaceNode *snode = t->area->spacedata.first_as<SpaceNode>();
       if (U.uiflag & USER_NODE_AUTO_OFFSET) {
         const char *str_dir = (snode->insert_ofs_dir == SNODE_INSERTOFS_DIR_RIGHT) ?
                                   IFACE_("right") :
@@ -459,7 +456,7 @@ static bool clip_uv_transform_translation(TransInfo *t, float vec[2])
   float base_offset[2] = {0.0f, 0.0f};
 
   /* If tiled image then constrain to correct/closest UDIM tile, else 0-1 UV space. */
-  const SpaceImage *sima = static_cast<const SpaceImage *>(t->area->spacedata.first);
+  const SpaceImage *sima = t->area->spacedata.first_as<SpaceImage>();
   BKE_image_find_nearest_tile_with_offset(sima->image, t->center_global, base_offset);
 
   float min[2], max[2];
@@ -504,17 +501,7 @@ static void applyTranslation(TransInfo *t)
   }
   else if (applyNumInput(&t->num, global_dir)) {
     if (t->con.mode & CON_APPLY) {
-      if (t->con.mode & CON_AXIS0) {
-        mul_v3_v3fl(global_dir, t->spacemtx[0], global_dir[0]);
-      }
-      else if (t->con.mode & CON_AXIS1) {
-        mul_v3_v3fl(global_dir, t->spacemtx[1], global_dir[0]);
-      }
-      else if (t->con.mode & CON_AXIS2) {
-        mul_v3_v3fl(global_dir, t->spacemtx[2], global_dir[0]);
-      }
-    }
-    else {
+      constraintNumInput(t, global_dir);
       mul_v3_m3v3(global_dir, t->spacemtx, global_dir);
     }
     if (t->flag & T_2D_EDIT) {
@@ -602,7 +589,7 @@ static void initTranslation(TransInfo *t, wmOperator * /*op*/)
   if ((t->spacetype == SPACE_GRAPH) && (t->region != nullptr)) {
     View2D *v2d = &t->region->v2d;
     Scene *scene = t->scene;
-    SpaceGraph *sipo = reinterpret_cast<SpaceGraph *>(t->area->spacedata.first);
+    SpaceGraph *sipo = t->area->spacedata.first_as<SpaceGraph>();
     const bool display_seconds = (sipo->mode == SIPO_MODE_ANIMATION) &&
                                  (sipo->flag & SIPO_DRAWTIME);
     aspect[0] = ui::view2d_grid_resolution_x(v2d, scene, display_seconds);
@@ -649,6 +636,7 @@ TransModeInfo TransMode_translate = {
     /*snap_distance_fn*/ transform_snap_distance_len_squared_fn,
     /*snap_apply_fn*/ ApplySnapTranslation,
     /*draw_fn*/ nullptr,
+    /*status_fn*/ nullptr,
 };
 
 }  // namespace blender::ed::transform

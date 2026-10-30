@@ -11,6 +11,7 @@
 #include "NOD_socket_search_link.hh"
 
 #include "node_function_util.hh"
+#include "node_shader_util.hh"
 
 namespace blender::nodes::node_fn_set_string_case_cc {
 
@@ -68,7 +69,7 @@ static std::string apply_string_case(const std::string &s, const Case mode)
   }
 
   Array<char, 64> out(len_chars * 4 + 1);
-  BLI_str_utf32_as_utf8(out.data(), utf32.data(), out.size());
+  BLI_str_utf32_as_utf8(out, utf32.data());
   return std::string(out.data());
 }
 
@@ -113,7 +114,7 @@ static void node_register()
 {
   static bke::bNodeType ntype;
 
-  fn_cmp_node_type_base(&ntype, "FunctionNodeSetStringCase"_ustr);
+  common_node_type_base(&ntype, "FunctionNodeSetStringCase"_ustr);
   ntype.ui_name = "Set String Case";
   ntype.ui_description = "Convert the case of a string";
   ntype.nclass = NODE_CLASS_CONVERTER;

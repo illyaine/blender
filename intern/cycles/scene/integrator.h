@@ -48,9 +48,7 @@ class Integrator : public Node {
   NODE_SOCKET_API(int, max_transmission_bounce)
   NODE_SOCKET_API(int, max_volume_bounce)
 
-#ifdef WITH_CYCLES_DEBUG
   NODE_SOCKET_API(DirectLightSamplingType, direct_light_sampling_type)
-#endif
 
   NODE_SOCKET_API(int, transparent_min_bounce)
   NODE_SOCKET_API(int, transparent_max_bounce)
@@ -140,6 +138,7 @@ class Integrator : public Node {
   };
 
   bool shadow_catcher_needs_recalc_ = true;
+  bool scene_has_shadow_catcher_ = false;
 
   Integrator();
   ~Integrator() override;
@@ -149,7 +148,7 @@ class Integrator : public Node {
 
   void tag_update(Scene *scene, const uint32_t flag);
 
-  uint get_kernel_features() const;
+  uint64_t get_kernel_features() const;
 
   AdaptiveSampling get_adaptive_sampling() const;
   DenoiseParams get_denoise_params() const;

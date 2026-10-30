@@ -5,8 +5,6 @@
 
 import argparse
 import os
-import pathlib
-import subprocess
 import sys
 from pathlib import Path
 try:
@@ -14,11 +12,23 @@ try:
     from modules import render_report
 
     class EEVEEReport(render_report.Report):
-        def __init__(self, title, output_dir, oiiotool, variation=None, blocklist=[]):
+        def __init__(
+            self,
+            title: str,
+            output_dir: Path,
+            oiiotool: Path,
+            variation: str | None = None,
+            blocklist: list[str] = [],
+        ) -> None:
             super().__init__(title, output_dir, oiiotool, variation=variation, blocklist=blocklist)
             self.gpu_backend = variation
 
-        def _get_render_arguments(self, arguments_cb, filepath, base_output_filepath):
+        def _get_render_arguments(
+            self,
+            arguments_cb: render_report.ArgumentsCallback,
+            filepath: Path,
+            base_output_filepath: Path,
+        ) -> list[str | Path]:
             return arguments_cb(filepath, base_output_filepath, gpu_backend=self.gpu_backend)
 
 except ImportError:
@@ -36,7 +46,7 @@ BLOCKLIST = [
     "ray_offset.blend",
     # Blocked due to difference in border texel handling between platforms (to be fixed).
     "render_passes_thinfilm_color.blend",
-    # Blocked due to a significant amount of transparency that have a different nosie pattern between devices.
+    # Blocked due to a significant amount of transparency that have a different noise pattern between devices.
     "light_path_is_shadow_ray.blend",
     # Blocked as the test seems to alternate between two different states
     "light_path_is_diffuse_ray.blend",
@@ -61,14 +71,26 @@ BLOCKLIST = [
     "osl_camera_bevel.blend",
     # Extreme texture values interpolate differently on different GPUs.
     "image_log.blend",
-    # Exhibit the LTC light leaking issue. To be enabeld back after fixing.
-    "light_path_glossy_depth.blend",
     # Exhibit non-deterministic behavior because of tracing outside the spotlight 45° cone.
     "light_path_is_camera_ray.blend",
     # Exhibit non-deterministic (to be fixed).
     "background_scene.blend",
+    # EEVEE doesnt have adaptive dicing.
+    "panorama_dicing.blend",
+    # Currently, the only image_mipmap test enabled for EEVEE is image_mipmap_large_tex.blend.
+    "image_cache_evict.blend",
+    "image_mipmap_area_light.blend",
+    "image_mipmap_filter_glossy.blend",
+    "image_mipmap_incomplete_derivs.blend",
+    "image_mipmap_light_tree.blend",
+    "image_mipmap_transparent_shadow.blend",
+    "image_mipmap_volume.blend",
+    "image_mipmap_working_space.blend",
+    "image_mipmap_world.blend",
+    "image_mipmap_world_sun.blend",
 
     ### Cycles only tests go here ###
+    "gsplat.*.blend",
 ]
 
 BLOCKLIST_METAL = [
@@ -110,7 +132,12 @@ BLOCKLIST_AMD_VK = [
     ".*"
 ]
 
-BLOCKLIST_INTEL_WINDOWS_GL = [
+BLOCKLIST_AMD_GL = [
+    # Fails on the AMD buildbot (to be investigated).
+    "aov_consecutive_view_layers.blend",
+]
+
+BLOCKLIST_INTEL_WINDOWS = [
     # Fails sporadically and causes all subsequent volume tests to fail (See #153612).
     "volume_instance.blend"
 ]
@@ -124,23 +151,36 @@ BLOCKLIST_NVIDIA_GL = [
 def uses_any_lit_material(scene):
     import bpy
 
-    # Define what we consider a "lit" BSDF node type in Blender
+    # Node types that receive lighting, and so are affected by light probes.
     lit_node_types = {
-        "BSDF_PRINCIPLED",
         "BSDF_DIFFUSE",
-        "BSDF_GLOSSY",
         "BSDF_GLASS",
-        "BSDF_ANISOTROPIC",
-        "BSDF_VELVET",
+        "BSDF_GLOSSY",
         "BSDF_HAIR",
+        "BSDF_HAIR_PRINCIPLED",
+        "BSDF_METALLIC",
+        "BSDF_PRINCIPLED",
+        "BSDF_REFRACTION",
+        "BSDF_SHEEN",
         "BSDF_TOON",
         "BSDF_TRANSLUCENT",
-        "BSDF_HAIR_PRINCIPLED",
-        "SUBSURFACE_SCATTERING",
-        "BSDF_HAIR_PRINCIPLED",
-        "VOLUME_SCATTER",
+        "EEVEE_SPECULAR",
         "PRINCIPLED_VOLUME",
+        "SUBSURFACE_SCATTERING",
+        "VOLUME_COEFFICIENTS",
+        "VOLUME_SCATTER",
     }
+
+    def node_tree_is_lit(node_tree, visited):
+        if node_tree is None or node_tree in visited:
+            return False
+        visited.add(node_tree)
+        for node in node_tree.nodes:
+            if node.type in lit_node_types:
+                return True
+            if node.type == "GROUP" and node_tree_is_lit(node.node_tree, visited):
+                return True
+        return False
 
     scene_materials = set()
 
@@ -159,9 +199,8 @@ def uses_any_lit_material(scene):
     for mat in scene_materials:
         # Check if the material uses the node system
         if mat.node_tree:
-            for node in mat.node_tree.nodes:
-                if node.type in lit_node_types:
-                    return True  # We found one, no need to check the rest of the nodes
+            if node_tree_is_lit(mat.node_tree, set()):
+                return True
         else:
             return True  # If use_nodes is False, Blender defaults to a basic lit surface
 
@@ -295,8 +334,12 @@ if inside_blender:
         sys.exit(1)
 
 
-def get_arguments(filepath, output_filepath, gpu_backend):
-    arguments = [
+def get_arguments(
+    filepath: Path,
+    output_filepath: Path,
+    gpu_backend: str | None,
+) -> list[str | Path]:
+    arguments: list[str | Path] = [
         "--background",
         "--factory-startup",
         "--enable-autoexec",
@@ -305,7 +348,7 @@ def get_arguments(filepath, output_filepath, gpu_backend):
         "--debug-exit-on-error"]
 
     if gpu_backend:
-        arguments.extend(["--gpu-backend", gpu_backend])
+        arguments.extend(["--gpu-backend", gpu_backend, "--debug-gpu-backend-no-fallback"])
 
     arguments.extend([
         filepath,
@@ -323,10 +366,10 @@ def create_argparse():
     parser = argparse.ArgumentParser(
         description="Run test script for each blend file in TESTDIR, comparing the render result with known output."
     )
-    parser.add_argument("--blender", required=True)
-    parser.add_argument("--testdir", required=True)
-    parser.add_argument("--outdir", required=True)
-    parser.add_argument("--oiiotool", required=True)
+    parser.add_argument("--blender", required=True, type=Path)
+    parser.add_argument("--testdir", required=True, type=Path)
+    parser.add_argument("--outdir", required=True, type=Path)
+    parser.add_argument("--oiiotool", required=True, type=Path)
     parser.add_argument('--batch', default=False, action='store_true')
     parser.add_argument('--gpu-backend')
     return parser
@@ -348,10 +391,12 @@ def main():
     if os.getenv("BLENDER_TEST_IGNORE_VENDOR_BLOCKLIST") is None:
         if gpu_vendor == "INTEL":
             blocklist += BLOCKLIST_INTEL
-        if gpu_vendor == "INTEL" and sys.platform == "win32" and args.gpu_backend == "opengl":
-            blocklist += BLOCKLIST_INTEL_WINDOWS_GL
+        if gpu_vendor == "INTEL" and sys.platform == "win32":
+            blocklist += BLOCKLIST_INTEL_WINDOWS
         if gpu_vendor == "NVIDIA" and args.gpu_backend == "opengl":
             blocklist += BLOCKLIST_NVIDIA_GL
+        if gpu_vendor == "AMD" and args.gpu_backend == "opengl":
+            blocklist += BLOCKLIST_AMD_GL
         if gpu_vendor == "AMD" and sys.platform == "win32" and args.gpu_backend == "vulkan":
             blocklist += BLOCKLIST_AMD_WINDOWS_VK
         if gpu_vendor == "AMD" and args.gpu_backend == "vulkan":
@@ -369,7 +414,7 @@ def main():
     report.set_fail_percent(0.08)
     report.set_fail_threshold(4.0 / 255.0)
 
-    test_dir_name = Path(args.testdir).name
+    test_dir_name = args.testdir.name
     if gpu_vendor == "NVIDIA" and args.gpu_backend == "opengl":
         # References are supposed to be generated on OpenGL Nvidia. Tighten the threshold for this platform.
         report.set_fail_percent(0.049)
@@ -384,6 +429,13 @@ def main():
         elif test_dir_name in {"texture"}:
             report.set_fail_percent(0.14)
             report.set_fail_threshold(6.0 / 255.0)
+        elif test_dir_name.startswith('image_mipmap'):
+            # Reference images on the CI worker seem to differ slightly from images on
+            # an NVIDIA RTX 4060 Ti with driver 610.74
+            report.set_fail_threshold(6.0 / 255.0)
+    elif test_dir_name.startswith('attributes') and gpu_vendor == "AMD":
+        # attribute_pointcloud_color
+        report.set_fail_percent(0.09)
     elif test_dir_name.startswith('camera'):
         # camera_stereo_panoramic have some platform specific small differences
         report.set_fail_percent(0.14)
@@ -405,6 +457,9 @@ def main():
         # Dithered transparency uses platform dependent noise pattern.
         report.set_fail_percent(0.22)
         report.set_fail_threshold(10.0 / 255.0)
+    elif test_dir_name.startswith('lighting_node'):
+        # Shadow noise pattern is system dependent.
+        report.set_fail_threshold(6.0 / 255.0)
     elif test_dir_name.startswith('instancing'):
         # Small pointcloud has platform dependent raster pattern
         report.set_fail_threshold(8.0 / 255.0)
@@ -413,11 +468,14 @@ def main():
     elif test_dir_name.startswith('hair'):
         # hair_close_up has differences of line rasterization on linux.
         if gpu_vendor == "INTEL":
-            report.set_fail_percent(0.13)
+            report.set_fail_percent(0.135)
     elif test_dir_name.startswith('principled_bsdf'):
         # principled_bsdf_thinfilm_metallic has some weird behavior in reflection of
         # black surfaces. to be investigated
-        report.set_fail_percent(0.09)
+        report.set_fail_percent(0.098)
+        # principled_bsdf_dispersion has some difference in the highlights
+        if gpu_vendor == "AMD":
+            report.set_fail_threshold(10.0 / 255.0)
     elif test_dir_name.startswith('integrator'):
         # Noise difference in transparent materials (mostly transparent_spatial_splits)
         report.set_fail_threshold(8.0 / 255.0)
@@ -440,7 +498,10 @@ def main():
     elif test_dir_name.startswith('shader'):
         # normal_mapping_light_leak fireflies.
         # fresnel_layer_weight high values are accumulated differently on different platform.
-        report.set_fail_percent(0.2)
+        report.set_fail_percent(0.221)
+        if gpu_vendor == "AMD":
+            # holdout has very different background SSR hit detection on AMD + Windows bot.
+            report.set_fail_percent(0.29)
         if gpu_vendor == "INTEL":
             # mix_color uses implementation dependent function.
             report.set_fail_percent(0.41)
@@ -454,11 +515,14 @@ def main():
         report.set_fail_threshold(6.0 / 255.0)
     elif test_dir_name.startswith('raycast') and gpu_vendor == "AMD":
         # Some slight contour differences on AMD
-        report.set_fail_percent(0.37)
-        report.set_fail_threshold(10.0 / 255.0)
+        report.set_fail_percent(0.42)
+        report.set_fail_threshold(12.0 / 255.0)
     elif test_dir_name.startswith('pointcloud'):
         # Only because of points_transparent
         report.set_fail_threshold(8.0 / 255.0)
+        if gpu_vendor == "AMD" and args.gpu_backend == "opengl":
+            # points_transparent
+            report.set_fail_percent(0.9)
     elif test_dir_name.startswith('motion_blur'):
         # Failure can be subtle, tighten threshold
         report.set_fail_percent(0.04)
@@ -468,12 +532,24 @@ def main():
             report.set_fail_percent(0.06)
         if args.gpu_backend == "opengl" and gpu_vendor == "AMD":
             # large_combined_motion has 1 hot pixel difference in rasterization.
-            report.set_fail_percent(0.043)
+            # shutter_curve_triangle on AMD PRO W7600
+            report.set_fail_percent(0.1)
             report.set_fail_threshold(3.0 / 255.0)
+    elif test_dir_name.startswith('bsdf') and args.gpu_backend == "opengl" and gpu_vendor == "AMD":
+        # ray_portal fireflies on AMD PRO W7600
+        report.set_fail_percent(0.3)
+        report.set_fail_threshold(3.0 / 255.0)
     elif test_dir_name.startswith('lightprobe') and args.gpu_backend == "metal":
         # Some shadow difference, to be investigated
         report.set_fail_percent(0.09)
         report.set_fail_threshold(6.0 / 255.0)
+    elif test_dir_name.startswith('image_mipmap'):
+        # Texture interpolation can look slightly different.
+        if gpu_vendor == "AMD":
+            report.set_fail_percent(0.39)
+        else:
+            report.set_fail_percent(0.08)
+        report.set_fail_threshold(8.0 / 255.0)
 
     ok = report.run(args.testdir, args.blender, get_arguments, batch=args.batch)
     sys.exit(not ok)

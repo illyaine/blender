@@ -12,6 +12,7 @@
 #include <string>
 
 #include "BLI_map.hh"
+#include "BLI_ustring.hh"
 #include "BLI_vector_set.hh"
 
 #include "DNA_listBase.h"
@@ -214,7 +215,7 @@ struct PropertyRNAOrID {
    */
   IDProperty *idprop;
   /** The name of the property. */
-  const char *identifier;
+  UString identifier;
 
   /**
    * Whether this property is a 'pure' IDProperty or not.
@@ -362,7 +363,7 @@ struct RNAPropertyOverrideApplyContext {
 using RNAPropOverrideApply = bool (*)(Main *bmain, RNAPropertyOverrideApplyContext &rnaapply_ctx);
 
 struct PropertyRNAIdentifierGetter {
-  StringRef operator()(const PropertyRNA *prop) const;
+  UString operator()(const PropertyRNA *prop) const;
 };
 
 /** Container - generic abstracted container of RNA properties */
@@ -375,7 +376,7 @@ struct FunctionRNA {
   /** Structs are containers of properties. */
   ContainerRNA cont = {};
   /** Unique identifier, keep after `cont`. */
-  const char *identifier = nullptr;
+  UString identifier;
 
   /** Various options */
   FunctionFlag flag = {};
@@ -401,7 +402,7 @@ struct PropertyRNA {
   int magic;
 
   /** Unique identifier. */
-  const char *identifier;
+  UString identifier;
   /** Various options. */
   PropertyFlag flag;
   /** Various override options. */
@@ -491,7 +492,7 @@ struct PropertyRNA {
   void *py_data;
 };
 
-inline StringRef PropertyRNAIdentifierGetter::operator()(const PropertyRNA *prop) const
+inline UString PropertyRNAIdentifierGetter::operator()(const PropertyRNA *prop) const
 {
   return prop->identifier;
 }
@@ -671,7 +672,7 @@ struct StructRNA {
   /** Structs are containers of properties. */
   ContainerRNA cont = {};
   /** Unique identifier, keep after `cont`. */
-  const char *identifier = nullptr;
+  UString identifier;
 
   /**
    * Python type, this is a sub-type of #pyrna_struct_Type
@@ -760,7 +761,7 @@ struct BlenderRNA {
    * A map of structs: `{StructRNA.identifier -> StructRNA}`
    * These are ensured to have unique names (with #STRUCT_PUBLIC_NAMESPACE enabled).
    */
-  Map<StringRef, StructRNA *> structs_map;
+  Map<UString, StructRNA *> structs_map;
 
   /**
    * This RNA container is created at runtime and is not the main static RNA. This is currently
@@ -771,7 +772,7 @@ struct BlenderRNA {
   bool runtime;
 };
 
-#define CONTAINER_RNA_ID(cont) (*(const char **)(((ContainerRNA *)(cont)) + 1))
+#define CONTAINER_RNA_ID(cont) (((const UString *)(((ContainerRNA *)(cont)) + 1))->c_str())
 
 /* Check compatibility of DNA types with RNA types. */
 inline bool is_dnatype_float_compat(const StringRef dnatype)

@@ -333,12 +333,9 @@ static void node_init(bNodeTree * /*tree*/, bNode *node)
   node->storage = data;
 }
 
-static void node_label(const bNodeTree * /*ntree*/,
-                       const bNode * /*node*/,
-                       char *label,
-                       const int label_maxncpy)
+static void node_label(const bNodeTree * /*ntree*/, const bNode * /*node*/, MutableCStr label)
 {
-  BLI_strncpy_utf8(label, CTX_IFACE_(BLT_I18NCONTEXT_ID_NODETREE, "Simulation"), label_maxncpy);
+  STRNCPY_UTF8(label, CTX_IFACE_(BLT_I18NCONTEXT_ID_NODETREE, "Simulation"));
 }
 
 static bool node_insert_link(bke::NodeInsertLinkParams &params)
@@ -566,7 +563,7 @@ class LazyFunctionForSimulationOutputNode final : public LazyFunction {
       /* Wait for skip input to be computed. */
       return;
     }
-    const bool skip = skip_variant->get<bool>();
+    const bool skip = skip_variant->copy_as<bool>();
 
     /* Instead of outputting the values directly, convert them to a bake state and then back.
      * This ensures that some geometry processing happens on the data consistently (e.g. removing

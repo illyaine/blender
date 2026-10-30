@@ -159,15 +159,14 @@ static void movie_clip_foreach_cache(ID *id,
 static void movie_clip_foreach_path(ID *id, BPathForeachPathData *bpath_data)
 {
   MovieClip *movie_clip = id_cast<MovieClip *>(id);
-  BKE_bpath_foreach_path_fixed_process(
-      bpath_data, movie_clip->filepath, sizeof(movie_clip->filepath));
+  BKE_bpath_foreach_path_fixed_process(bpath_data, movie_clip->filepath);
 }
 
 static void write_movieTracks(BlendWriter *writer, ListBaseT<MovieTrackingTrack> *tracks)
 {
   MovieTrackingTrack *track;
 
-  track = static_cast<MovieTrackingTrack *>(tracks->first);
+  track = tracks->first();
   while (track) {
     writer->write_struct(track);
 
@@ -209,7 +208,9 @@ static void movieclip_blend_write(BlendWriter *writer, ID *id, const void *id_ad
 
   MovieTracking *tracking = &clip->tracking;
 
-  writer->write_id_struct(id_address, clip);
+  writer->write_id_struct(id_address, clip, [](BlendStructWriter<MovieClip> &struct_writer) {
+    struct_writer.shallow_data.runtime = {};
+  });
   BKE_id_blend_write(writer, &clip->id);
 
   for (MovieTrackingObject &object : tracking->objects) {
@@ -309,6 +310,7 @@ IDTypeInfo IDType_ID_MC = {
     .foreach_cache = movie_clip_foreach_cache,
     .foreach_path = movie_clip_foreach_path,
     .foreach_working_space_color = nullptr,
+    .foreach_asset_weak_reference = nullptr,
     .owner_pointer_get = nullptr,
 
     .blend_write = movieclip_blend_write,
@@ -388,15 +390,14 @@ static void get_sequence_filepath(const MovieClip *clip,
   int offset;
 
   BLI_strncpy(filepath, clip->filepath, sizeof(clip->filepath));
-  BLI_path_sequence_decode(filepath, head, sizeof(head), tail, sizeof(tail), &numlen);
+  BLI_path_sequence_decode(filepath, head, tail, &numlen);
 
   /* Movie-clips always points to first image from sequence, auto-guess offset for now.
    * Could be something smarter in the future. */
   offset = sequence_guess_offset(clip->filepath, strlen(head), numlen);
 
   if (numlen) {
-    BLI_path_sequence_encode(filepath,
-                             FILE_MAX,
+    BLI_path_sequence_encode(MutableCStr(filepath, FILE_MAX),
                              head,
                              tail,
                              numlen,
@@ -420,7 +421,7 @@ static void get_proxy_filepath(const MovieClip *clip,
   char dir[FILE_MAX], clipdir[FILE_MAX], clipfile[FILE_MAX];
   int proxynr = framenr - clip->start_frame + 1 + clip->frame_offset;
 
-  BLI_path_split_dir_file(clip->filepath, clipdir, FILE_MAX, clipfile, FILE_MAX);
+  BLI_path_split_dir_file(clip->filepath, clipdir, clipfile);
 
   if (clip->flag & MCLIP_USE_PROXY_CUSTOM_DIR) {
     STRNCPY(dir, clip->proxy.dir);
@@ -449,8 +450,8 @@ static void get_proxy_filepath(const MovieClip *clip,
   }
 
   BLI_path_abs(filepath, BKE_main_blendfile_path_from_global());
-  BLI_path_frame(filepath, FILE_MAX, 1, 0);
-  BLI_strncat(filepath, ".jpg", FILE_MAX);
+  BLI_path_frame(MutableCStr(filepath, FILE_MAX), 1, 0);
+  BLI_strncat(MutableCStr(filepath, FILE_MAX), ".jpg");
 }
 
 static ImBuf *movieclip_load_sequence_file(MovieClip *clip,
@@ -461,7 +462,7 @@ static ImBuf *movieclip_load_sequence_file(MovieClip *clip,
   ImBuf *ibuf;
   char filepath[FILE_MAX];
   bool use_proxy = false;
-  char *colorspace;
+  ColorManagedColorspaceSettings *colorspace_settings;
 
   use_proxy = (flag & MCLIP_USE_PROXY) && user->render_size != MCLIP_PROXY_RENDER_SIZE_FULL;
   if (use_proxy) {
@@ -474,21 +475,21 @@ static ImBuf *movieclip_load_sequence_file(MovieClip *clip,
      * But image sequences are built in the display space.
      */
     if (clip->source == MCLIP_SRC_MOVIE) {
-      colorspace = clip->colorspace_settings.name;
+      colorspace_settings = &clip->colorspace_settings;
     }
     else {
-      colorspace = nullptr;
+      colorspace_settings = nullptr;
     }
   }
   else {
     get_sequence_filepath(clip, framenr, filepath);
-    colorspace = clip->colorspace_settings.name;
+    colorspace_settings = &clip->colorspace_settings;
   }
 
   ImBufFlags loadflag = ImBufFlags::ByteData | ImBufFlags::AlphaDetect | ImBufFlags::Metadata;
 
   /* read ibuf */
-  ibuf = IMB_load_image_from_filepath(filepath, loadflag, colorspace);
+  ibuf = IMB_load_image_from_filepath(filepath, loadflag, colorspace_settings);
 
   return ibuf;
 }
@@ -502,8 +503,7 @@ static void movieclip_open_anim_file(MovieClip *clip)
     BLI_path_abs(filepath_abs, ID_BLEND_PATH_FROM_GLOBAL(&clip->id));
 
     /* FIXME: make several stream accessible in image editor, too */
-    clip->anim = openanim(
-        filepath_abs, ImBufFlags::Zero, 0, false, clip->colorspace_settings.name);
+    clip->anim = openanim(filepath_abs, ImBufFlags::Zero, 0, false, &clip->colorspace_settings);
 
     if (clip->anim) {
       if (clip->flag & MCLIP_USE_PROXY_CUSTOM_DIR) {
@@ -548,7 +548,7 @@ static void movieclip_calc_length(MovieClip *clip)
     ushort numlen;
     char filepath[FILE_MAX], head[FILE_MAX], tail[FILE_MAX];
 
-    BLI_path_sequence_decode(clip->filepath, head, sizeof(head), tail, sizeof(tail), &numlen);
+    BLI_path_sequence_decode(clip->filepath, head, tail, &numlen);
 
     if (numlen == 0) {
       /* there's no number group in file name, assume it's single framed sequence */
@@ -637,7 +637,7 @@ static int user_frame_to_cache_frame(MovieClip *clip, int framenr)
       ushort numlen;
       char head[FILE_MAX], tail[FILE_MAX];
 
-      BLI_path_sequence_decode(clip->filepath, head, sizeof(head), tail, sizeof(tail), &numlen);
+      BLI_path_sequence_decode(clip->filepath, head, tail, &numlen);
 
       /* see comment in get_sequence_filepath */
       clip->cache->sequence_offset = sequence_guess_offset(clip->filepath, strlen(head), numlen);
@@ -782,7 +782,7 @@ static bool put_imbuf_cache(
     clip->cache->sequence_offset = -1;
     if (clip->source == MCLIP_SRC_SEQUENCE) {
       ushort numlen;
-      BLI_path_sequence_decode(clip->filepath, nullptr, 0, nullptr, 0, &numlen);
+      BLI_path_sequence_decode(clip->filepath, std::nullopt, std::nullopt, &numlen);
       clip->cache->is_still_sequence = (numlen == 0);
     }
   }
@@ -906,9 +906,7 @@ MovieClip *BKE_movieclip_file_add_exists_ex(Main *bmain, const char *filepath, b
   BLI_path_abs(filepath_abs, BKE_main_blendfile_path(bmain));
 
   /* first search an identical filepath */
-  for (clip = static_cast<MovieClip *>(bmain->movieclips.first); clip;
-       clip = static_cast<MovieClip *>(clip->id.next))
-  {
+  for (clip = bmain->movieclips.first(); clip; clip = static_cast<MovieClip *>(clip->id.next)) {
     STRNCPY(filepath_test, clip->filepath);
     BLI_path_abs(filepath_test, ID_BLEND_PATH(bmain, &clip->id));
 
@@ -1556,7 +1554,7 @@ static void free_buffers(MovieClip *clip)
   }
 
   MovieClip_RuntimeGPUTexture *tex;
-  for (tex = static_cast<MovieClip_RuntimeGPUTexture *>(clip->runtime.gputextures.first); tex;
+  for (tex = clip->runtime.gputextures.first(); tex;
        tex = static_cast<MovieClip_RuntimeGPUTexture *>(tex->next))
   {
     if (tex->gputexture != nullptr) {
@@ -1913,7 +1911,7 @@ static gpu::Texture **movieclip_get_gputexture_ptr(MovieClip *clip, MovieClipUse
 {
   /* Check if we have an existing entry for that clip user. */
   MovieClip_RuntimeGPUTexture *tex;
-  for (tex = static_cast<MovieClip_RuntimeGPUTexture *>(clip->runtime.gputextures.first); tex;
+  for (tex = clip->runtime.gputextures.first(); tex;
        tex = static_cast<MovieClip_RuntimeGPUTexture *>(tex->next))
   {
     if (memcmp(&tex->user, cuser, sizeof(MovieClipUser)) == 0) {

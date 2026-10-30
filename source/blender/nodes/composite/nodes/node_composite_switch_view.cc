@@ -41,13 +41,11 @@ static void node_declare(NodeDeclarationBuilder &b)
   }
 }
 
-static void node_init(const bContext *C, PointerRNA *ptr)
+static void node_init_api(const bContext *C, PointerRNA *node_ptr)
 {
   Scene *scene = CTX_data_scene(C);
-  bNode *node = (bNode *)ptr->data;
-
-  /* store scene for dynamic declaration */
-  node->id = reinterpret_cast<ID *>(scene);
+  bNode *node = node_ptr->data_as<bNode>();
+  node->id = id_cast<ID *>(scene);
   id_us_plus(node->id);
 }
 
@@ -71,6 +69,11 @@ class SwitchViewOperation : public NodeOperation {
     const Result &input = this->get_input(this->context().get_view_name());
     result.share_data(input);
   }
+
+  bool uses_asynchronous_execution() const override
+  {
+    return false;
+  }
 };
 
 static NodeOperation *get_compositor_operation(Context &context, const bNode &node)
@@ -88,7 +91,7 @@ static void node_register()
   ntype.enum_name_legacy = "VIEWSWITCH";
   ntype.nclass = NODE_CLASS_CONVERTER;
   ntype.declare = node_declare;
-  ntype.initfunc_api = node_init;
+  ntype.initfunc_api = node_init_api;
   ntype.get_compositor_operation = get_compositor_operation;
 
   bke::node_register_type(ntype);

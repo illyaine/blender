@@ -192,8 +192,11 @@ struct TokenBuffer {
 
   /**
    * \brief Merge complex literals such as floats, strings and comments.
+   *
+   * \param do_bsl_literals: If true, will parse angle bracket without a whitespace before or after
+   * as a template bracket. Will also merge AssignMul tokens.
    */
-  void merge_complex_literals();
+  void merge_complex_literals(bool do_bsl_literals = false);
 
   /**
    * \brief Assign keyword types and atoms for a small set of identifier.

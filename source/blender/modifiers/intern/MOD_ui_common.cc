@@ -92,7 +92,7 @@ void modifier_error_message_draw(ui::Layout &layout, PointerRNA *ptr)
   ModifierData *md = static_cast<ModifierData *>(ptr->data);
   if (md->error) {
     ui::Layout &row = layout.row(false);
-    row.label(RPT_(md->error), ICON_STATUS_ERROR);
+    row.label_multiline(RPT_(md->error), ICON_STATUS_ERROR);
   }
 }
 
@@ -106,7 +106,7 @@ void modifier_error_message_draw(ui::Layout &layout, PointerRNA *ptr)
 PointerRNA *modifier_panel_get_property_pointers(Panel *panel, PointerRNA *r_ob_ptr)
 {
   PointerRNA *ptr = ui::panel_custom_data_get(panel);
-  BLI_assert(!RNA_pointer_is_null(ptr));
+  BLI_assert(*ptr);
   BLI_assert(RNA_struct_is_a(ptr->type, RNA_Modifier));
 
   if (r_ob_ptr != nullptr) {
@@ -350,7 +350,7 @@ static void modifier_panel_header(const bContext *C, Panel *panel)
     int cage_index = BKE_modifiers_get_cage_index(scene, ob, &last_cage_index, false);
     if (BKE_modifier_supports_cage(scene, md) && (index <= last_cage_index)) {
       sub = &row.row(true);
-      if (index < cage_index || !BKE_modifier_couldbe_cage(scene, md)) {
+      if (index < cage_index || !BKE_modifier_could_be_cage(scene, md)) {
         sub->active_set(false);
       }
       sub->prop(ptr, "show_on_cage", UI_ITEM_NONE, "", ICON_NONE);
@@ -436,14 +436,14 @@ static void modifier_panel_header(const bContext *C, Panel *panel)
   /* Switch context buttons. */
   if (modifier_is_simulation(md) == 1) {
     PointerRNA op_ptr = row.op("WM_OT_properties_context_change", "", ICON_PROPERTIES);
-    if (!RNA_pointer_is_null(&op_ptr)) {
+    if (op_ptr) {
       RNA_string_set(&op_ptr, "context", "PHYSICS");
     }
     buttons_number++;
   }
   else if (modifier_is_simulation(md) == 2) {
     PointerRNA op_ptr = row.op("WM_OT_properties_context_change", "", ICON_PROPERTIES);
-    if (!RNA_pointer_is_null(&op_ptr)) {
+    if (op_ptr) {
       RNA_string_set(&op_ptr, "context", "PARTICLES");
     }
     buttons_number++;

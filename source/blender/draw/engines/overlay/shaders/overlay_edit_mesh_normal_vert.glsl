@@ -27,6 +27,7 @@ void main()
   /* Avoid undefined behavior after return. */
   final_color = float4(0.0f);
   gl_Position = float4(0.0f);
+  edge_start = edge_pos = float2(0.0f);
 
 #if defined(FACE_NORMAL) || defined(VERT_NORMAL) || defined(LOOP_NORMAL)
   /* Point primitive. */
@@ -51,41 +52,25 @@ void main()
 
   float3 nor;
 #if defined(FACE_NORMAL)
-#  if defined(FLOAT_NORMAL)
-  /* Path for opensubdiv. To be phased out at some point. */
-  nor = norAndFlag[vert_i].xyz;
-#  else
   if (hq_normals) {
     nor = gpu_attr_load_short4_snorm(norAndFlag, gpu_attr_0, vert_i).xyz;
   }
   else {
     nor = gpu_attr_load_uint_1010102_snorm(norAndFlag, gpu_attr_0, vert_i).xyz;
   }
-#  endif
-
   final_color = theme.colors.normal;
 
 #elif defined(VERT_NORMAL)
-#  if defined(FLOAT_NORMAL)
-  /* Path for opensubdiv. To be phased out at some point. */
-  nor = gpu_attr_load_float3(vnor, gpu_attr_0, vert_i);
-#  else
   nor = gpu_attr_load_uint_1010102_snorm(vnor, gpu_attr_0, vert_i).xyz;
-#  endif
   final_color = theme.colors.vnormal;
 
 #elif defined(LOOP_NORMAL)
-#  if defined(FLOAT_NORMAL)
-  /* Path for opensubdiv. To be phased out at some point. */
-  nor = lnor[vert_i].xyz;
-#  else
   if (hq_normals) {
     nor = gpu_attr_load_short4_snorm(lnor, gpu_attr_0, vert_i).xyz;
   }
   else {
     nor = gpu_attr_load_uint_1010102_snorm(lnor, gpu_attr_0, vert_i).xyz;
   }
-#  endif
   final_color = theme.colors.lnormal;
 
 #else
@@ -138,6 +123,10 @@ void main()
   }
 
   gl_Position = drw_point_world_to_homogenous(world_pos);
+
+  /* Convert to screen position [0..sizeVp]. */
+  edge_start = edge_pos = ((gl_Position.xy / gl_Position.w) * 0.5f + 0.5f) *
+                          uniform_buf.size_viewport;
 
   final_color.a *= (test_occlusion()) ? alpha : 1.0f;
 

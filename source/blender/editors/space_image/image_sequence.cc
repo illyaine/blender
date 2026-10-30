@@ -59,12 +59,11 @@ static void image_sequence_get_frame_ranges(StringRefNull blendfile_path,
   RNA_BEGIN (op->ptr, itemptr, "files") {
     char head[FILE_MAX], tail[FILE_MAX];
     ushort digits;
-    char *filename = RNA_string_get_alloc(&itemptr, "name", nullptr, 0, nullptr);
+    char *filename = RNA_string_get_alloc(&itemptr, "name", std::nullopt, nullptr);
     ImageFrame *frame = MEM_new_zeroed<ImageFrame>("image_frame");
 
     /* use the first file in the list as base filename */
-    frame->framenr = BLI_path_sequence_decode(
-        filename, head, sizeof(head), tail, sizeof(tail), &digits);
+    frame->framenr = BLI_path_sequence_decode(filename, head, tail, &digits);
 
     /* still in the same sequence */
     if (do_frame_range && (range != nullptr) && STREQLEN(base_head, head, FILE_MAX) &&
@@ -72,14 +71,14 @@ static void image_sequence_get_frame_ranges(StringRefNull blendfile_path,
     {
       /* Set filepath to first frame in the range. */
       if (frame->framenr < range_first_frame) {
-        BLI_path_join(range->filepath, sizeof(range->filepath), dir, filename);
+        BLI_path_join(range->filepath, dir, filename);
         range_first_frame = frame->framenr;
       }
     }
     else {
       /* start a new frame range */
       range = MEM_new_zeroed<ImageFrameRange>(__func__);
-      BLI_path_join(range->filepath, sizeof(range->filepath), dir, filename);
+      BLI_path_join(range->filepath, dir, filename);
       BLI_addtail(ranges, range);
 
       STRNCPY(base_head, head);
@@ -135,7 +134,7 @@ static void image_detect_frame_range(ImageFrameRange *range, const bool detect_u
   /* Image Sequence */
   BLI_listbase_sort(&range->frames, image_cmp_frame);
 
-  ImageFrame *frame = static_cast<ImageFrame *>(range->frames.first);
+  ImageFrame *frame = range->frames.first();
   if (frame != nullptr) {
     int frame_curr = frame->framenr;
     range->offset = frame_curr;
@@ -152,7 +151,7 @@ static void image_detect_frame_range(ImageFrameRange *range, const bool detect_u
     range->offset = 0;
   }
 
-  ImageFrame *frame_last = static_cast<ImageFrame *>(range->frames.last);
+  ImageFrame *frame_last = range->frames.last();
   if (frame_last != nullptr) {
     range->max_framenr = frame_last->framenr;
   }
@@ -195,8 +194,7 @@ ListBaseT<ImageFrameRange> ED_image_filesel_detect_sequences(StringRefNull blend
       char head[FILE_MAX], tail[FILE_MAX];
       ushort digits;
       ImageFrame *frame = MEM_new_zeroed<ImageFrame>("image_frame");
-      frame->framenr = BLI_path_sequence_decode(
-          filename, head, sizeof(head), tail, sizeof(tail), &digits);
+      frame->framenr = BLI_path_sequence_decode(filename, head, tail, &digits);
       BLI_addtail(&range->frames, frame);
 
       was_relative = BLI_path_is_rel(filepath);

@@ -137,7 +137,7 @@ static void cryptomatte_add(bNode &node, NodeCryptomatte &node_cryptomatte, floa
   entry->encoded_hash = encoded_hash;
   bke::cryptomatte::CryptomatteSessionPtr session = cryptomatte_init_from_node(node, true);
   if (session) {
-    BKE_cryptomatte_find_name(session.get(), encoded_hash, entry->name, sizeof(entry->name));
+    BKE_cryptomatte_find_name(session.get(), encoded_hash, entry->name);
   }
 
   BLI_addtail(&node_cryptomatte.entries, entry);
@@ -190,7 +190,7 @@ void ntreeCompositCryptomatteUpdateLayerNames(bNode *node)
   }
 }
 
-void ntreeCompositCryptomatteLayerPrefix(const bNode *node, char *r_prefix, size_t prefix_maxncpy)
+void ntreeCompositCryptomatteLayerPrefix(const bNode *node, MutableCStr r_prefix)
 {
   BLI_assert(node->type_legacy == CMP_NODE_CRYPTOMATTE);
   NodeCryptomatte *node_cryptomatte = static_cast<NodeCryptomatte *>(node->storage);
@@ -204,14 +204,14 @@ void ntreeCompositCryptomatteLayerPrefix(const bNode *node, char *r_prefix, size
       }
 
       if (layer_name == node_cryptomatte->layer_name) {
-        BLI_strncpy_utf8(r_prefix, node_cryptomatte->layer_name, prefix_maxncpy);
+        STRNCPY_UTF8(r_prefix, node_cryptomatte->layer_name);
         return;
       }
     }
   }
 
   const char *cstr = first_layer_name.c_str();
-  BLI_strncpy_utf8(r_prefix, cstr, prefix_maxncpy);
+  STRNCPY_UTF8(r_prefix, cstr);
 }
 
 CryptomatteSession *ntreeCompositCryptomatteSession(bNode *node)
@@ -529,7 +529,7 @@ class BaseCryptoMatteOperation : public NodeOperation {
     GPU_shader_bind(shader);
 
     Result &input_image = get_input_image();
-    input_image.bind_as_texture(shader, "input_tx");
+    gpu::Texture *input_texture = input_image.bind_as_texture_or_single_value(shader, "input_tx");
 
     matte.bind_as_texture(shader, "matte_tx");
 
@@ -541,7 +541,7 @@ class BaseCryptoMatteOperation : public NodeOperation {
     compute_dispatch_threads_at_least(shader, domain.data_size);
 
     GPU_shader_unbind();
-    input_image.unbind_as_texture();
+    input_image.unbind_as_texture_or_single_value(input_texture);
     matte.unbind_as_texture();
     image_output.unbind_as_image();
   }
@@ -593,17 +593,16 @@ static void node_declare(NodeDeclarationBuilder &b)
   b.add_output<decl::Color>("Pick"_ustr).structure_type(StructureType::Dynamic);
 }
 
-static void node_init(bNodeTree * /*ntree*/, bNode *node)
+static void node_init(bNodeTree * /*node_tree*/, bNode *node)
 {
-  NodeCryptomatte *user = MEM_new<NodeCryptomatte>(__func__);
-  node->storage = user;
+  NodeCryptomatte *storage = MEM_new<NodeCryptomatte>(__func__);
+  node->storage = storage;
 }
 
-static void node_init_api(const bContext *C, PointerRNA *ptr)
+static void node_init_api(const bContext *C, PointerRNA *node_ptr)
 {
   Scene *scene = CTX_data_scene(C);
-  bNode *node = static_cast<bNode *>(ptr->data);
-  BLI_assert(node->type_legacy == CMP_NODE_CRYPTOMATTE);
+  bNode *node = node_ptr->data_as<bNode>();
   node->id = &scene->id;
   id_us_plus(node->id);
 }
@@ -825,7 +824,7 @@ class CryptoMatteOperation : public BaseCryptoMatteOperation {
   std::string get_type_name()
   {
     char type_name[MAX_NAME];
-    ntreeCompositCryptomatteLayerPrefix(&node(), type_name, sizeof(type_name));
+    ntreeCompositCryptomatteLayerPrefix(&node(), type_name);
     return std::string(type_name);
   }
 

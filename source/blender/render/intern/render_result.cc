@@ -39,8 +39,6 @@
 #include "IMB_openexr.hh"
 #include "IMB_partial_update.hh"
 
-#include "GPU_texture.hh"
-
 #include "render_result.h"
 #include "render_types.h"
 
@@ -52,8 +50,8 @@ namespace blender {
 
 static void render_result_views_free(RenderResult *rr)
 {
-  while (rr->views.first) {
-    RenderView *rv = static_cast<RenderView *>(rr->views.first);
+  while (rr->views.first()) {
+    RenderView *rv = rr->views.first();
     BLI_remlink(&rr->views, rv);
 
     IMB_freeImBuf(rv->ibuf);
@@ -79,11 +77,11 @@ void render_result_free(RenderResult *rr)
     return;
   }
 
-  while (rr->layers.first) {
-    RenderLayer *rl = static_cast<RenderLayer *>(rr->layers.first);
+  while (rr->layers.first()) {
+    RenderLayer *rl = rr->layers.first();
 
-    while (rl->passes.first) {
-      RenderPass *rpass = static_cast<RenderPass *>(rl->passes.first);
+    while (rl->passes.first()) {
+      RenderPass *rpass = rl->passes.first();
 
       IMB_freeImBuf(rpass->ibuf);
 
@@ -116,7 +114,7 @@ void render_result_free_list(ListBaseT<RenderResult> *lb, RenderResult *rr)
   for (; rr; rr = rrnext) {
     rrnext = rr->next;
 
-    if (lb && lb->first) {
+    if (lb && lb->first_) {
       BLI_remlink(lb, rr);
     }
 
@@ -163,8 +161,8 @@ void render_result_views_shallowdelete(RenderResult *rr)
     return;
   }
 
-  while (rr->views.first) {
-    RenderView *rv = static_cast<RenderView *>(rr->views.first);
+  while (rr->views.first()) {
+    RenderView *rv = rr->views.first();
     BLI_remlink(&rr->views, rv);
     MEM_delete(rv);
   }
@@ -435,48 +433,6 @@ void RE_pass_set_buffer_data(RenderPass *pass, float *data)
   IMB_partial_update_mark_full(ibuf);
 }
 
-gpu::Texture *RE_pass_ensure_gpu_texture_cache(Render *re, RenderPass *rpass)
-{
-  ImBuf *ibuf = rpass->ibuf;
-
-  if (!ibuf) {
-    /* No existing GPU texture, but also no CPU side data to create it from. */
-    return nullptr;
-  }
-
-  if (ibuf->gpu.texture) {
-    /* Return existing GPU texture, regardless whether it also exists on CPU or not. */
-    return ibuf->gpu.texture;
-  }
-
-  if (ibuf->float_data() == nullptr) {
-    /* No CPU side data to create the texture from. */
-    return nullptr;
-  }
-
-  const gpu::TextureFormat format = (rpass->channels == 1) ?
-                                        gpu::TextureFormat::SFLOAT_32 :
-                                    (rpass->channels == 3) ?
-                                        gpu::TextureFormat::SFLOAT_32_32_32 :
-                                        gpu::TextureFormat::SFLOAT_32_32_32_32;
-
-  gpu::Texture *texture = GPU_texture_create_2d("RenderBuffer.gpu_texture",
-                                                rpass->rectx,
-                                                rpass->recty,
-                                                1,
-                                                format,
-                                                GPU_TEXTURE_USAGE_GENERAL,
-                                                nullptr);
-  if (texture) {
-    GPU_texture_update(texture, GPU_DATA_FLOAT, ibuf->float_data());
-    re->result_has_gpu_texture_caches = true;
-  }
-
-  IMB_assign_gpu_texture(ibuf, texture);
-
-  return ibuf->gpu.texture;
-}
-
 void RE_render_result_full_channel_name(char *fullname,
                                         const char *layname,
                                         const char *passname,
@@ -504,7 +460,8 @@ void RE_render_result_full_channel_name(char *fullname,
     strings[strings_len++] = token;
   }
 
-  BLI_string_join_array_by_sep_char(fullname, EXR_PASS_MAXNAME, '.', strings, strings_len);
+  BLI_string_join_array_by_sep_char(
+      MutableCStr(fullname, EXR_PASS_MAXNAME), '.', strings, strings_len);
 }
 
 static int passtype_from_name(const char *name)
@@ -774,9 +731,7 @@ void render_result_merge(RenderResult *rr, RenderResult *rrpart)
 
     if (rlp) {
       /* Passes are allocated in sync. */
-      for (RenderPass *rpass = static_cast<RenderPass *>(rl.passes.first),
-                      *rpassp = static_cast<RenderPass *>(rlp->passes.first);
-           rpass && rpassp;
+      for (RenderPass *rpass = rl.passes.first(), *rpassp = rlp->passes.first(); rpass && rpassp;
            rpass = rpass->next)
       {
         /* For save buffers, skip any passes that are only saved to disk. */
@@ -837,7 +792,7 @@ void render_result_single_layer_end(Render *re)
   if (re->pushedresult->rectx == re->result->rectx && re->pushedresult->recty == re->result->recty)
   {
     /* find which layer in re->pushedresult should be replaced */
-    RenderLayer *rl = static_cast<RenderLayer *>(re->result->layers.first);
+    RenderLayer *rl = re->result->layers.first();
 
     /* render result should be empty after this */
     BLI_remlink(&re->result->layers, rl);
@@ -967,9 +922,7 @@ bool render_result_exr_file_read_path(RenderResult *rr,
 
 #define FILE_CACHE_MAX (FILE_MAXDIR + FILE_MAXFILE + MAX_ID_NAME + 100)
 
-static void render_result_exr_file_cache_path(Scene *sce,
-                                              const char *root,
-                                              char r_path[FILE_CACHE_MAX])
+static void render_result_exr_file_cache_path(Scene *sce, const char *root, MutableCStr r_path)
 {
   char filename_full[FILE_MAXFILE + MAX_ID_NAME + 100];
   char filename[FILE_MAXFILE];
@@ -980,7 +933,7 @@ static void render_result_exr_file_cache_path(Scene *sce,
   /* If root is relative, use either current .blend file dir, or temp one if not saved. */
   const char *blendfile_path = BKE_main_blendfile_path_from_global();
   if (blendfile_path[0] != '\0') {
-    BLI_path_split_dir_file(blendfile_path, dirname, sizeof(dirname), filename, sizeof(filename));
+    BLI_path_split_dir_file(blendfile_path, dirname, filename);
     BLI_path_extension_strip(filename); /* Strip `.blend`. */
     BLI_hash_md5_buffer(blendfile_path, strlen(blendfile_path), path_digest);
   }
@@ -1008,7 +961,7 @@ static void render_result_exr_file_cache_path(Scene *sce,
    */
   SNPRINTF(filename_full, "cached_RR_%s_%s_%s.exr", filename, sce->id.name + 2, path_hexdigest);
 
-  BLI_path_join(r_path, FILE_CACHE_MAX, root, filename_full);
+  BLI_path_join(r_path, root, filename_full);
 }
 
 void render_result_exr_file_cache_write(Render *re)
@@ -1205,7 +1158,7 @@ bool RE_HasCombinedLayer(const RenderResult *result)
     return false;
   }
 
-  const RenderView *rv = static_cast<RenderView *>(result->views.first);
+  const RenderView *rv = result->views.first();
   if (rv == nullptr) {
     return false;
   }
@@ -1244,16 +1197,16 @@ bool RE_RenderResult_is_stereo(const RenderResult *result)
 RenderView *RE_RenderViewGetById(RenderResult *rr, const int view_id)
 {
   RenderView *rv = static_cast<RenderView *>(BLI_findlink(&rr->views, view_id));
-  BLI_assert(rr->views.first);
-  return rv ? rv : static_cast<RenderView *>(rr->views.first);
+  BLI_assert(rr->views.first());
+  return rv ? rv : rr->views.first();
 }
 
 RenderView *RE_RenderViewGetByName(RenderResult *rr, const char *viewname)
 {
   RenderView *rv = static_cast<RenderView *>(
       BLI_findstring(&rr->views, viewname, offsetof(RenderView, name)));
-  BLI_assert(rr->views.first);
-  return rv ? rv : static_cast<RenderView *>(rr->views.first);
+  BLI_assert(rr->views.first());
+  return rv ? rv : rr->views.first();
 }
 
 static RenderPass *duplicate_render_pass(RenderPass *rpass)
@@ -1270,7 +1223,7 @@ static RenderLayer *duplicate_render_layer(RenderLayer *rl)
 {
   RenderLayer *new_rl = MEM_new<RenderLayer>("new render layer", *rl);
   new_rl->next = new_rl->prev = nullptr;
-  new_rl->passes.first = new_rl->passes.last = nullptr;
+  new_rl->passes.first_ = new_rl->passes.last_ = nullptr;
   for (RenderPass &rpass : rl->passes) {
     RenderPass *new_rpass = duplicate_render_pass(&rpass);
     BLI_addtail(&new_rl->passes, new_rpass);
@@ -1291,8 +1244,8 @@ RenderResult *RE_DuplicateRenderResult(RenderResult *rr)
 {
   RenderResult *new_rr = MEM_new<RenderResult>("new duplicated render result", *rr);
   new_rr->next = new_rr->prev = nullptr;
-  new_rr->layers.first = new_rr->layers.last = nullptr;
-  new_rr->views.first = new_rr->views.last = nullptr;
+  new_rr->layers.first_ = new_rr->layers.last_ = nullptr;
+  new_rr->views.first_ = new_rr->views.last_ = nullptr;
   for (RenderLayer &rl : rr->layers) {
     RenderLayer *new_rl = duplicate_render_layer(&rl);
     BLI_addtail(&new_rr->layers, new_rl);

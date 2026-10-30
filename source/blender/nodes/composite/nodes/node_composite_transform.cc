@@ -79,19 +79,25 @@ using namespace blender::compositor;
 
 class TransformOperation : public NodeOperation {
  public:
-  using NodeOperation::NodeOperation;
+  TransformOperation(Context &context, const bNode &node) : NodeOperation(context, node)
+  {
+    InputDescriptor &image_descriptor = this->get_input_descriptor("Image");
+    image_descriptor.skip_type_conversion = true;
+  }
 
   void execute() override
   {
-    const float2 translation = float2(this->get_input("X").get_single_value_default<float>(),
-                                      this->get_input("Y").get_single_value_default<float>());
+    const Result &input = this->get_input("Image");
+    const float x = this->get_input("X").get_single_value_default<float>();
+    const float y = this->get_input("Y").get_single_value_default<float>();
+    const float2 translation = float2(x, y) * input.domain().pixel_size;
     const math::AngleRadian rotation = this->get_input("Angle").get_single_value_default<float>();
     const float2 scale = float2(this->get_input("Scale").get_single_value_default<float>());
     const float3x3 transformation = math::from_loc_rot_scale<float3x3>(
         translation, rotation, scale);
 
-    const Result &input = this->get_input("Image");
     Result &output = this->get_result("Image");
+    output.set_type(input.type());
     output.share_data(input);
     output.transform(transformation);
     output.get_realization_options().interpolation = this->get_interpolation();
@@ -147,6 +153,11 @@ class TransformOperation : public NodeOperation {
     }
 
     return Extension::Clip;
+  }
+
+  bool uses_asynchronous_execution() const override
+  {
+    return false;
   }
 };
 

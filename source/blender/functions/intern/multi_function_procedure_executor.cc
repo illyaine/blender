@@ -2,8 +2,13 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup fn
+ */
+
 #include "FN_multi_function_procedure_executor.hh"
 
+#include "BLI_map.hh"
 #include "BLI_stack.hh"
 
 namespace blender::fn::multi_function {

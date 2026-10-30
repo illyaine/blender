@@ -411,10 +411,10 @@ static void view_align_update(Main * /*main*/, Scene * /*scene*/, PointerRNA *pt
   RNA_struct_system_idprops_unset(ptr, "rotation");
 }
 
-void add_unit_props_size(wmOperatorType *ot)
+void add_unit_props_size(wmOperatorType *ot, float default_value)
 {
   RNA_def_float_distance(
-      ot->srna, "size", 2.0f, 0.0, OBJECT_ADD_SIZE_MAXF, "Size", "", 0.001, 100.00);
+      ot->srna, "size", default_value, 0.0, OBJECT_ADD_SIZE_MAXF, "Size", "", 0.001, 100.00);
 }
 
 void add_unit_props_radius_ex(wmOperatorType *ot, float default_value)
@@ -1335,7 +1335,7 @@ static wmOperatorStatus object_add_text_exec(bContext *C, wmOperator *op)
   }
 
   obedit = add_type(C, OB_FONT, nullptr, loc, rot, enter_editmode, local_view_bits);
-  BKE_object_obdata_size_init(obedit, RNA_float_get(op->ptr, "radius"));
+  BKE_object_obdata_size_init(obedit, RNA_float_get(op->ptr, "size"));
 
   return OPERATOR_FINISHED;
 }
@@ -1355,7 +1355,7 @@ void OBJECT_OT_text_add(wmOperatorType *ot)
   ot->flag = OPTYPE_REGISTER | OPTYPE_UNDO;
 
   /* properties */
-  add_unit_props_radius(ot);
+  add_unit_props_size(ot, 1.0f);
   add_generic_props(ot, true);
 }
 
@@ -2361,7 +2361,7 @@ static NodesModifierData *add_essential_asset_modifier(bContext &C,
   if (!asset_id) {
     return nullptr;
   }
-  if (GS(asset_id->name) != ID_NT) {
+  if (asset_id->id_type() != ID_NT) {
     return nullptr;
   }
   bNodeTree *node_group = id_cast<bNodeTree *>(asset_id);
@@ -2501,9 +2501,9 @@ static wmOperatorStatus object_pointcloud_add_exec(bContext *C, wmOperator *op)
   pointcloud.totpoint = 400;
 
   bke::MutableAttributeAccessor attributes = pointcloud.attributes_for_write();
-  bke::SpanAttributeWriter<float3> position = attributes.lookup_or_add_for_write_only_span<float3>(
+  bke::SpanAttributeWriter<float3> position = attributes.ensure_for_write_only_span<float3>(
       "position", bke::AttrDomain::Point);
-  bke::SpanAttributeWriter<float> radii = attributes.lookup_or_add_for_write_only_span<float>(
+  bke::SpanAttributeWriter<float> radii = attributes.ensure_for_write_only_span<float>(
       "radius", bke::AttrDomain::Point);
 
   RandomNumberGenerator rng(0);
@@ -2595,7 +2595,7 @@ static wmOperatorStatus object_delete_exec(bContext *C, wmOperator *op)
   }
   CTX_DATA_END;
 
-  if (has_volume_lightprobe && WM_jobs_test(wm, scene, WM_JOB_TYPE_LIGHT_BAKE)) {
+  if (has_volume_lightprobe && WM_jobs_has_running(wm, scene, WM_JOB_TYPE_LIGHT_BAKE)) {
     WM_jobs_stop_type(wm, scene, WM_JOB_TYPE_LIGHT_BAKE);
     BKE_report(op->reports,
                RPT_WARNING,
@@ -3762,9 +3762,8 @@ static void mesh_data_to_grease_pencil(const Mesh &mesh_eval,
     const bke::AttributeAccessor mesh_attributes = mesh_eval.attributes();
     VArray<int> mesh_materials = *mesh_attributes.lookup_or_default(
         "material_index", bke::AttrDomain::Face, 0);
-    bke::SpanAttributeWriter<int> material_indices =
-        attributes.lookup_or_add_for_write_only_span<int>("material_index",
-                                                          bke::AttrDomain::Curve);
+    bke::SpanAttributeWriter<int> material_indices = attributes.ensure_for_write_only_span<int>(
+        "material_index", bke::AttrDomain::Curve);
     threading::parallel_for(curves.curves_range(), 2048, [&](const IndexRange range) {
       for (const int i : range) {
         /* Increase material index by 1 to accommodate the stroke material. */
@@ -3773,7 +3772,7 @@ static void mesh_data_to_grease_pencil(const Mesh &mesh_eval,
     });
     material_indices.finish();
 
-    bke::SpanAttributeWriter<int> fill_ids = attributes.lookup_or_add_for_write_only_span<int>(
+    bke::SpanAttributeWriter<int> fill_ids = attributes.ensure_for_write_only_span<int>(
         "fill_id", bke::AttrDomain::Curve);
     threading::parallel_for(curves.curves_range(), 2048, [&](const IndexRange range) {
       for (const int i : range) {
@@ -3783,7 +3782,7 @@ static void mesh_data_to_grease_pencil(const Mesh &mesh_eval,
     });
     fill_ids.finish();
 
-    bke::SpanAttributeWriter<bool> hide_stroke = attributes.lookup_or_add_for_write_span<bool>(
+    bke::SpanAttributeWriter<bool> hide_stroke = attributes.ensure_for_write_span<bool>(
         "hide_stroke", bke::AttrDomain::Curve, bke::AttributeInitValue(true));
     hide_stroke.finish();
 
@@ -4194,9 +4193,7 @@ static Object *convert_font_to_curve_legacy_generic(Object *ob,
     /* other users */
     Object *ob1 = nullptr;
     if (ID_REAL_USERS(&cu->id) > 1) {
-      for (ob1 = static_cast<Object *>(info.bmain->objects.first); ob1;
-           ob1 = static_cast<Object *>(ob1->id.next))
-      {
+      for (ob1 = info.bmain->objects.first(); ob1; ob1 = static_cast<Object *>(ob1->id.next)) {
         if (ob1->data == ob->data && ob1 != ob) {
           ob1->type = OB_CURVES_LEGACY;
           DEG_id_tag_update(&ob1->id,
@@ -4296,7 +4293,7 @@ static void create_grease_pencil_fills(bke::greasepencil::Drawing &drawing)
 
   VArray<int> materials = *attributes.lookup_or_default(
       "material_index", bke::AttrDomain::Curve, 0);
-  bke::SpanAttributeWriter<int> fill_ids = attributes.lookup_or_add_for_write_only_span<int>(
+  bke::SpanAttributeWriter<int> fill_ids = attributes.ensure_for_write_only_span<int>(
       "fill_id", bke::AttrDomain::Curve);
   /* Hide all the strokes, only show fills. */
   attributes.add<bool>("hide_stroke", bke::AttrDomain::Curve, bke::AttributeInitValue(true));

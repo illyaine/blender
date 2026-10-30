@@ -131,10 +131,7 @@ static void sh_node_mix_layout(ui::Layout &layout, bContext * /*C*/, PointerRNA 
   layout.prop(ptr, "clamp_factor", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 }
 
-static void sh_node_mix_label(const bNodeTree * /*ntree*/,
-                              const bNode *node,
-                              char *label,
-                              int label_maxncpy)
+static void sh_node_mix_label(const bNodeTree * /*ntree*/, const bNode *node, MutableCStr label)
 {
   const NodeShaderMix &storage = node_storage(*node);
   if (storage.data_type == SOCK_RGBA) {
@@ -143,10 +140,10 @@ static void sh_node_mix_label(const bNodeTree * /*ntree*/,
     if (!enum_label) {
       name = CTX_N_(BLT_I18NCONTEXT_COLOR, "Unknown");
     }
-    BLI_strncpy_utf8(label, CTX_IFACE_(BLT_I18NCONTEXT_COLOR, name), label_maxncpy);
+    STRNCPY_UTF8(label, CTX_IFACE_(BLT_I18NCONTEXT_COLOR, name));
     return;
   }
-  BLI_strncpy_utf8(label, IFACE_("Mix"), label_maxncpy);
+  STRNCPY_UTF8(label, IFACE_("Mix"));
 }
 
 static int sh_node_mix_ui_class(const bNode *node)
@@ -169,7 +166,7 @@ static void sh_node_mix_update(bNodeTree *ntree, bNode *node)
   const NodeShaderMix &storage = node_storage(*node);
   const eNodeSocketDatatype data_type = storage.data_type;
 
-  bNodeSocket *sock_factor = static_cast<bNodeSocket *>(node->inputs.first);
+  bNodeSocket *sock_factor = node->inputs.first();
   bNodeSocket *sock_factor_vec = static_cast<bNodeSocket *>(sock_factor->next);
 
   bool use_vector_factor = data_type == SOCK_VECTOR &&
@@ -386,7 +383,7 @@ static int gpu_shader_mix(GPUMaterial *mat,
     if (is_non_uniform && is_vector_mode) {
       const float min[3] = {0.0f, 0.0f, 0.0f};
       const float max[3] = {1.0f, 1.0f, 1.0f};
-      const GPUNodeLink *factor_link = in[1].link ? in[1].link : GPU_uniform(in[1].vec);
+      const GPUNodeLink *factor_link = in[1].link ? in[1].link : GPU_uniform(in[1]);
       GPU_link(mat,
                "node_mix_clamp_vector",
                factor_link,
@@ -397,7 +394,7 @@ static int gpu_shader_mix(GPUMaterial *mat,
     else {
       const float min = 0.0f;
       const float max = 1.0f;
-      const GPUNodeLink *factor_link = in[0].link ? in[0].link : GPU_uniform(in[0].vec);
+      const GPUNodeLink *factor_link = in[0].link ? in[0].link : GPU_uniform(in[0]);
       GPU_link(mat,
                "node_mix_clamp_value",
                factor_link,

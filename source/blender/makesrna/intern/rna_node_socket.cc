@@ -266,7 +266,7 @@ static std::optional<std::string> rna_NodeSocket_path(const PointerRNA *ptr)
   const int socketindex = BLI_findindex(sockets, sock);
 
   char name_esc[sizeof(node.name) * 2];
-  BLI_str_escape(name_esc, node.name, sizeof(name_esc));
+  BLI_str_escape(name_esc, node.name);
 
   if (sock->in_out == SOCK_IN) {
     return fmt::format("nodes[\"{}\"].inputs[{}]", name_esc, socketindex);
@@ -477,6 +477,7 @@ static void rna_NodeSocket_hide_set(PointerRNA *ptr, bool value)
 
   if (value) {
     sock->flag |= SOCK_HIDDEN;
+    sock->flag &= ~SOCK_SELECT;
   }
   else {
     sock->flag &= ~SOCK_HIDDEN;

@@ -32,10 +32,10 @@
  */
 
 #include <cstring>
-#include <fmt/ranges.h>
 #include <string>
 #include <string_view>
 
+#include "BLI_compiler_attrs.hh"
 #include "BLI_span.hh"
 
 namespace blender {
@@ -48,12 +48,16 @@ class StringRef;
  */
 class StringRefBase {
  protected:
+  /* May be nullptr when used in StringRef. */
   const char *data_;
   int64_t size_;
 
   constexpr StringRefBase(const char *data, int64_t size);
 
  public:
+  /** Makes this type "string-like" for some libraries (e.g. `fmt`). */
+  using value_type = char;
+
   /** Similar to #string_view::npos, but signed. */
   static constexpr int64_t not_found = -1;
 
@@ -75,8 +79,7 @@ class StringRefBase {
    * fit, it will be truncated while keeping it valid UTF8 (assuming the #StringRef itself is
    * valid UTF8).
    */
-  void copy_utf8_truncated(char *dst, int64_t dst_size) const;
-  template<size_t N> void copy_utf8_truncated(char (&dst)[N]) const;
+  void copy_utf8_truncated(MutableCStr dst) const;
 
   /**
    * Copy the string into a char array. The copied string will be null-terminated. If it does not
@@ -86,8 +89,7 @@ class StringRefBase {
    * this should be used for strings which are allowed to contain arbitrary
    * byte sequences without a known encoding such as file-paths.
    */
-  void copy_bytes_truncated(char *dst, int64_t dst_size) const;
-  template<size_t N> void copy_bytes_truncated(char (&dst)[N]) const;
+  void copy_bytes_truncated(MutableCStr dst) const;
 
   /**
    * Copy the string into a buffer. The buffer has to be one byte larger than the size of the
@@ -126,6 +128,10 @@ class StringRefBase {
   constexpr StringRef trim() const;
   constexpr StringRef trim(StringRef characters_to_remove) const;
   constexpr StringRef trim(char character_to_remove) const;
+  constexpr StringRef trim_left() const;
+  constexpr StringRef trim_left(StringRef characters_to_remove) const;
+  constexpr StringRef trim_right() const;
+  constexpr StringRef trim_right(StringRef characters_to_remove) const;
 };
 
 /**
@@ -137,9 +143,9 @@ class StringRefNull : public StringRefBase {
 
  public:
   constexpr StringRefNull();
-  constexpr StringRefNull(const char *str, int64_t size);
+  constexpr StringRefNull(const char *str, int64_t size) ATTR_NONNULL(2);
   StringRefNull(std::nullptr_t) = delete;
-  constexpr StringRefNull(const char *str);
+  constexpr StringRefNull(const char *str) ATTR_NONNULL(2);
   StringRefNull(const std::string &str);
 
   constexpr char operator[](int64_t index) const;
@@ -150,6 +156,9 @@ class StringRefNull : public StringRefBase {
  * References a const char array. It might not be null terminated.
  *
  * StringRef can be compared with StringRef and StringRefNull.
+ *
+ * \note It is valid to pass `nullptr` to the constructor, as it can be used to indicate an empty
+ * string.
  */
 class StringRef : public StringRefBase {
  public:
@@ -240,16 +249,6 @@ inline void StringRefBase::copy_unsafe(char *dst) const
     memcpy(dst, data_, size_t(size_));
   }
   dst[size_] = '\0';
-}
-
-template<size_t N> inline void StringRefBase::copy_utf8_truncated(char (&dst)[N]) const
-{
-  this->copy_utf8_truncated(dst, N);
-}
-
-template<size_t N> inline void StringRefBase::copy_bytes_truncated(char (&dst)[N]) const
-{
-  this->copy_bytes_truncated(dst, N);
 }
 
 /**
@@ -434,6 +433,48 @@ constexpr StringRef StringRefBase::trim(StringRef characters_to_remove) const
   return this->substr(find_front, substr_len);
 }
 
+/**
+ * Return a new StringRef that does not contain leading white-space.
+ */
+constexpr StringRef StringRefBase::trim_left() const
+{
+  return this->trim_left(" \t\r\n");
+}
+
+/**
+ * Return a new StringRef that removes all the leading characters that occur in
+ * `characters_to_remove`.
+ */
+constexpr StringRef StringRefBase::trim_left(StringRef characters_to_remove) const
+{
+  const int64_t find_front = this->find_first_not_of(characters_to_remove);
+  if (find_front == not_found) {
+    return StringRef();
+  }
+  return this->substr(find_front);
+}
+
+/**
+ * Return a new StringRef that does not contain trailing white-space.
+ */
+constexpr StringRef StringRefBase::trim_right() const
+{
+  return this->trim_right(" \t\r\n");
+}
+
+/**
+ * Return a new StringRef that removes all the trailing characters that occur in
+ * `characters_to_remove`.
+ */
+constexpr StringRef StringRefBase::trim_right(StringRef characters_to_remove) const
+{
+  const int64_t find_end = this->find_last_not_of(characters_to_remove);
+  if (find_end == not_found) {
+    return StringRef();
+  }
+  return this->substr(0, find_end + 1);
+}
+
 /** \} */
 
 /* -------------------------------------------------------------------- */
@@ -459,7 +500,7 @@ constexpr StringRefNull::StringRefNull(const char *str, const int64_t size)
 constexpr StringRefNull::StringRefNull(const char *str)
     : StringRefBase(str, int64_t(std::char_traits<char>::length(str)))
 {
-  BLI_assert(str != nullptr);
+  BLI_assert(data_ != nullptr);
   BLI_assert(data_[size_] == '\0');
 }
 
@@ -672,14 +713,3 @@ inline std::string_view format_as(StringRef str)
 /** \} */
 
 }  // namespace blender
-
-/**
- * Disable conflicting range formatter in fmtlib. Otherwise we will get compile errors
- * where fmtlib doesn't know if it should use the formatter from format.h or ranges.h.
- */
-namespace fmt {
-
-template<> struct is_range<blender::StringRef, char> : std::false_type {};
-template<> struct is_range<blender::StringRefNull, char> : std::false_type {};
-
-}  // namespace fmt

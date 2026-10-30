@@ -28,7 +28,7 @@
 #include "DNA_texture_types.h"
 
 #include "BLI_kdopbvh.hh"
-#include "BLI_kdtree.hh"
+#include "BLI_kdtree_new.hh"
 #include "BLI_linklist.hh"
 #include "BLI_listbase.hh"
 #include "BLI_math_base_safe.hh"
@@ -530,7 +530,8 @@ void psys_thread_context_free(ParticleThreadContext *ctx)
     MEM_delete(ctx->seams);
   }
   // if (ctx->vertpart) MEM_delete(ctx->vertpart);
-  kdtree_free<float3>(ctx->tree);
+  MEM_delete(ctx->tree);
+  MEM_delete(ctx->tree_positions);
 
   if (ctx->clumpcurve != nullptr) {
     BKE_curvemapping_free(ctx->clumpcurve);
@@ -1087,7 +1088,7 @@ void reset_particle(ParticleSimulationData *sim, ParticleData *pa, float dtime, 
 
     bpa->data.health = part->boids->health;
     bpa->data.mode = eBoidMode_InAir;
-    bpa->data.state_id = (static_cast<BoidState *>(part->boids->states.first))->id;
+    bpa->data.state_id = (part->boids->states.first())->id;
     bpa->data.acc[0] = bpa->data.acc[1] = bpa->data.acc[2] = 0.0f;
   }
 
@@ -1114,7 +1115,7 @@ void reset_particle(ParticleSimulationData *sim, ParticleData *pa, float dtime, 
   pa->dietime = pa->time + pa->lifetime;
 
   if ((sim->psys->pointcache) && (sim->psys->pointcache->flag & PTCACHE_BAKED) &&
-      (sim->psys->pointcache->mem_cache.first))
+      (sim->psys->pointcache->mem_cache.first()))
   {
     float dietime = psys_get_dietime_from_cache(sim->psys->pointcache, p);
     pa->dietime = std::min(pa->dietime, dietime);
@@ -1178,7 +1179,7 @@ ParticleSystem *psys_get_target_system(Object *ob, ParticleTarget *pt)
 void psys_count_keyed_targets(ParticleSimulationData *sim)
 {
   ParticleSystem *psys = sim->psys, *kpsys;
-  ParticleTarget *pt = static_cast<ParticleTarget *>(psys->targets.first);
+  ParticleTarget *pt = psys->targets.first();
   int keys_valid = 1;
   psys->totkeyed = 0;
 
@@ -1234,7 +1235,7 @@ static void set_keyed_keys(ParticleSimulationData *sim)
 
   psys->flag &= ~PSYS_KEYED;
 
-  pt = static_cast<ParticleTarget *>(psys->targets.first);
+  pt = psys->targets.first();
   for (k = 0; k < totkeys; k++) {
     ksim.ob = pt->ob ? pt->ob : sim->ob;
     ksim.psys = static_cast<ParticleSystem *>(
@@ -1271,8 +1272,7 @@ static void set_keyed_keys(ParticleSimulationData *sim)
 
     ksim.psys->flag |= keyed_flag;
 
-    pt = static_cast<ParticleTarget *>(
-        (pt->next && pt->next->flag & PTARGET_VALID) ? pt->next : psys->targets.first);
+    pt = (pt->next && pt->next->flag & PTARGET_VALID) ? pt->next : psys->targets.first();
   }
 
   psys->flag |= PSYS_KEYED;
@@ -1372,25 +1372,18 @@ void psys_update_particle_tree(ParticleSystem *psys, float cfra)
     PARTICLE_P;
 
     if (!psys->tree || psys->tree_frame != cfra) {
-      int totpart = 0;
+      Array<float3> positions(psys->totpart);
+      Vector<int> alive_particles;
       LOOP_SHOWN_PARTICLES
       {
         if (pa->alive == PARS_ALIVE) {
-          totpart++;
+          positions[p] = (pa->state.time == cfra) ? pa->prev_state.co : pa->state.co;
+          alive_particles.append(p);
         }
       }
 
-      kdtree_free<float3>(psys->tree);
-      psys->tree = kdtree_new<float3>(totpart);
-
-      LOOP_SHOWN_PARTICLES
-      {
-        if (pa->alive == PARS_ALIVE) {
-          const float *co = (pa->state.time == cfra) ? pa->prev_state.co : pa->state.co;
-          kdtree_insert<float3>(psys->tree, p, co);
-        }
-      }
-      kdtree_balance<float3>(psys->tree);
+      MEM_delete(psys->tree);
+      psys->tree = MEM_new<bke::ParticleKDTree>(__func__, std::move(positions), alive_particles);
 
       psys->tree_frame = cfra;
     }
@@ -2126,9 +2119,7 @@ static void psys_sph_init(ParticleSimulationData *sim,
 
   /* Add other coupled particle systems. */
   sphdata->psys[0] = sim->psys;
-  for (i = 1, pt = static_cast<ParticleTarget *>(sim->psys->targets.first); i < 10;
-       i++, pt = (pt ? pt->next : nullptr))
-  {
+  for (i = 1, pt = sim->psys->targets.first(); i < 10; i++, pt = (pt ? pt->next : nullptr)) {
     sphdata->psys[i] = pt ? psys_get_target_system(sim->ob, pt) : nullptr;
   }
 
@@ -2568,7 +2559,7 @@ static void collision_point_on_surface(
   }
 }
 /* find first root in range [0-1] starting from 0 */
-static float collision_newton_rhapson(ParticleCollision *col,
+static float collision_newton_raphson(ParticleCollision *col,
                                       float radius,
                                       ParticleCollisionElement *pce,
                                       NRDistanceFunc distance_func)
@@ -2674,7 +2665,7 @@ static int collision_sphere_to_tri(ParticleCollision *col,
   pce->inv_nor = -1;
   pce->inside = 0;
 
-  ct = collision_newton_rhapson(col, radius, pce, nr_signed_distance_to_plane);
+  ct = collision_newton_raphson(col, radius, pce, nr_signed_distance_to_plane);
 
   if (ct >= 0.0f && ct < *t && (result->inside == 0 || pce->inside == 1)) {
     float e1[3], e2[3], p0[3];
@@ -2729,7 +2720,7 @@ static int collision_sphere_to_edges(ParticleCollision *col,
     cur->tot = 2;
     cur->inside = 0;
 
-    ct = collision_newton_rhapson(col, radius, cur, nr_distance_to_edge);
+    ct = collision_newton_raphson(col, radius, cur, nr_distance_to_edge);
 
     if (ct >= 0.0f && ct < *t) {
       float u, e[3], vec[3];
@@ -2774,7 +2765,7 @@ static int collision_sphere_to_verts(ParticleCollision *col,
     cur->tot = 1;
     cur->inside = 0;
 
-    ct = collision_newton_rhapson(col, radius, cur, nr_distance_to_vert);
+    ct = collision_newton_raphson(col, radius, cur, nr_distance_to_vert);
 
     if (ct >= 0.0f && ct < *t) {
       *result = *cur;
@@ -3870,7 +3861,7 @@ static void dynamics_step(ParticleSimulationData *sim, float cfra)
   /* initialize physics type specific stuff */
   switch (part->phystype) {
     case PART_PHYS_BOIDS: {
-      ParticleTarget *pt = static_cast<ParticleTarget *>(psys->targets.first);
+      ParticleTarget *pt = psys->targets.first();
       bbd.sim = sim;
       bbd.part = part;
       bbd.cfra = cfra;
@@ -3891,7 +3882,7 @@ static void dynamics_step(ParticleSimulationData *sim, float cfra)
       break;
     }
     case PART_PHYS_FLUID: {
-      ParticleTarget *pt = static_cast<ParticleTarget *>(psys->targets.first);
+      ParticleTarget *pt = psys->targets.first();
       psys_update_particle_bvhtree(psys, cfra);
 
       /* Updating others systems particle tree for fluid-fluid interaction. */
@@ -5070,9 +5061,7 @@ void BKE_particlesystem_id_loop(ParticleSystem *psys, ParticleSystemIDFunc func,
 
 void BKE_particlesystem_reset_all(Object *object)
 {
-  for (ModifierData *md = static_cast<ModifierData *>(object->modifiers.first); md != nullptr;
-       md = md->next)
-  {
+  for (ModifierData *md = object->modifiers.first(); md != nullptr; md = md->next) {
     if (md->type != eModifierType_ParticleSystem) {
       continue;
     }
@@ -5097,10 +5086,7 @@ void BKE_particle_settings_eval_reset(Depsgraph *depsgraph, ParticleSettings *pa
 void BKE_particle_system_eval_init(Depsgraph *depsgraph, Object *object)
 {
   DEG_debug_print_eval(depsgraph, __func__, object->id.name, object);
-  for (ParticleSystem *psys = static_cast<ParticleSystem *>(object->particlesystem.first);
-       psys != nullptr;
-       psys = psys->next)
-  {
+  for (ParticleSystem *psys = object->particlesystem.first(); psys != nullptr; psys = psys->next) {
     psys->recalc |= (psys->part->id.recalc & ID_RECALC_PSYS_ALL);
   }
 }

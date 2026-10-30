@@ -34,7 +34,7 @@ int template_search_textbut_width(PointerRNA *ptr, PropertyRNA *name_prop)
 
   BLI_assert(RNA_property_type(name_prop) == PROP_STRING);
 
-  const char *name = RNA_property_string_get_alloc(ptr, name_prop, str, sizeof(str), &buf_len);
+  const char *name = RNA_property_string_get_alloc(ptr, name_prop, str, &buf_len);
 
   const uiFontStyle *fstyle = UI_FSTYLE_WIDGET;
   const int margin = UI_UNIT_X * 0.75f;
@@ -69,9 +69,8 @@ void template_add_button_search_menu(const bContext *C,
                                      ButtonArgNCopy func_argN_copy_fn)
 {
   const PointerRNA active_ptr = RNA_property_pointer_get(ptr, prop);
-  ID *id = (active_ptr.data && RNA_struct_is_ID(active_ptr.type)) ?
-               static_cast<ID *>(active_ptr.data) :
-               nullptr;
+  ID *id = (active_ptr && RNA_struct_is_ID(active_ptr.type)) ? static_cast<ID *>(active_ptr.data) :
+                                                               nullptr;
   const ID *idfrom = ptr->owner_id;
   const StructRNA *type = active_ptr.type ? active_ptr.type : RNA_property_pointer_type(ptr, prop);
   Button *but;
@@ -182,7 +181,7 @@ Block *template_common_search_menu(const bContext *C,
 
     /* fake button, it holds space for search items */
     uiDefBut(block, ButtonType::Label, "", 0, UI_UNIT_Y, w, h, nullptr, 0, 0, std::nullopt);
-    but = uiDefSearchBut(block, search, ICON_VIEWZOOM, sizeof(search), 0, 0, w, UI_UNIT_Y, "");
+    but = uiDefSearchBut(block, search, ICON_VIEWZOOM, 0, 0, w, UI_UNIT_Y, "");
     button_search_preview_grid_size_set(but, preview_rows, preview_cols);
   }
   /* list view */
@@ -207,7 +206,6 @@ Block *template_common_search_menu(const bContext *C,
                          search,
 
                          ICON_VIEWZOOM,
-                         sizeof(search),
                          0,
                          0,
                          searchbox_width,
@@ -218,7 +216,7 @@ Block *template_common_search_menu(const bContext *C,
                          searchbox_create_generic,
                          search_update_fn,
                          search_arg,
-                         false,
+                         nullptr,
                          nullptr,
                          search_exec_fn,
                          active_item);

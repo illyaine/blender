@@ -2,6 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+/** \file
+ * \ingroup nodes
+ */
+
 #include "NOD_eval_log.hh"
 #include "NOD_geometry_nodes_bundle.hh"
 #include "NOD_geometry_nodes_closure.hh"
@@ -43,6 +47,8 @@
 #include "ED_viewer_path.hh"
 
 #include "MOD_nodes.hh"
+
+#include "WM_api.hh"
 
 #include "UI_resources.hh"
 
@@ -108,17 +114,16 @@ GeometryInfoLog::GeometryInfoLog(const bke::GeometrySet &geometry_set)
    * attributes with the same name but different domains or data types on separate components. */
   Set<StringRef> names;
 
-  geometry_set.attribute_foreach(all_component_types,
-                                 true,
-                                 [&](const StringRef name,
-                                     const bke::AttributeMetaData &meta_data,
-                                     const bke::GeometryComponent & /*component*/) {
-                                   if (!bke::attribute_name_is_anonymous(name) && names.add(name))
-                                   {
-                                     this->attributes.append(
-                                         {name, meta_data.domain, meta_data.data_type});
-                                   }
-                                 });
+  geometry_set.attribute_foreach(
+      all_component_types,
+      true,
+      [&](const StringRef name,
+          const bke::AttributeMetaData &meta_data,
+          const bke::GeometryComponent & /*component*/) {
+        if (!bke::attribute_name_is_anonymous(name) && names.add(name)) {
+          this->attributes.append({name, meta_data.domain, meta_data.data_type});
+        }
+      });
 
   for (const bke::GeometryComponent *component : geometry_set.get_components()) {
     this->component_types.append(component->type());
@@ -262,22 +267,10 @@ ListInfoLog::ListInfoLog(const GListPtr &list)
   this->size = list->size();
 }
 
-NodeWarning::NodeWarning(const Report &report)
-{
-  switch (report.type) {
-    case RPT_ERROR:
-      this->type = NodeWarningType::Error;
-      break;
-    default:
-      this->type = NodeWarningType::Info;
-      break;
-  }
-  this->message = report.message;
-}
-
 ImageInfoLog::ImageInfoLog(const int2 data_size,
                            const int2 display_size,
                            const int2 data_offset,
+                           const float2 pixel_size,
                            const float3x3 transformation,
                            const StringRefNull interpolation,
                            const StringRefNull extension_x,
@@ -286,6 +279,7 @@ ImageInfoLog::ImageInfoLog(const int2 data_size,
     : data_size(data_size),
       display_size(display_size),
       data_offset(data_offset),
+      pixel_size(pixel_size),
       transformation(transformation),
       interpolation(interpolation),
       extension_x(extension_x),
@@ -345,8 +339,8 @@ void NodeTreeLogger::log_value(const bNode &node, const bNodeSocket &socket, con
 
   if (type.is<bke::SocketValueVariant>()) {
     bke::SocketValueVariant value_variant = *value.get<bke::SocketValueVariant>();
-    if (value_variant.valid_for_socket(SOCK_GEOMETRY)) {
-      const bke::GeometrySet &geometry = value_variant.get<bke::GeometrySet>();
+    if (value_variant.get().is_type<bke::GeometrySet>()) {
+      const bke::GeometrySet &geometry = *value_variant.get_if<bke::GeometrySet>();
       store_logged_value(this->allocator->construct<GeometryInfoLog>(geometry));
     }
     else if (value_variant.is_context_dependent_field()) {
@@ -363,7 +357,7 @@ void NodeTreeLogger::log_value(const bNode &node, const bNodeSocket &socket, con
       const auto list = value_variant.extract<GListPtr>();
       store_logged_value(this->allocator->construct<ListInfoLog>(list));
     }
-    else if (value_variant.valid_for_socket(SOCK_BUNDLE)) {
+    else if (value_variant.get().is_type<BundlePtr>()) {
       Vector<BundleValueLog::Item> items;
       if (const BundlePtr bundle = value_variant.extract<BundlePtr>()) {
         for (const auto &item : bundle->items()) {
@@ -381,7 +375,7 @@ void NodeTreeLogger::log_value(const bNode &node, const bNodeSocket &socket, con
       }
       store_logged_value(this->allocator->construct<BundleValueLog>(std::move(items)));
     }
-    else if (value_variant.valid_for_socket(SOCK_CLOSURE)) {
+    else if (value_variant.get().is_type<ClosurePtr>()) {
       Vector<ClosureValueLog::Item> inputs;
       Vector<ClosureValueLog::Item> outputs;
       std::optional<ClosureSourceLocation> source_location;
@@ -401,8 +395,7 @@ void NodeTreeLogger::log_value(const bNode &node, const bNodeSocket &socket, con
           std::move(inputs), std::move(outputs), source_location, eval_log));
     }
     else {
-      value_variant.convert_to_single();
-      const GPointer value = value_variant.get_single_ptr();
+      const GPointer value = value_variant.get();
       if (value.type()->is<std::string>()) {
         const std::string &string = *value.get<std::string>();
         store_logged_value(this->allocator->construct<StringLog>(string, *this->allocator));
@@ -429,7 +422,7 @@ const bke::GeometrySet *ViewerNodeLog::main_geometry() const
     for (const Item &item : this->items) {
 #ifdef WITH_OPENVDB
       if (item.value.is_volume_grid()) {
-        const bke::GVolumeGrid grid = item.value.get<bke::GVolumeGrid>();
+        const bke::GVolumeGrid grid = *item.value.get_if<bke::GVolumeGrid>();
         Volume *volume = BKE_id_new_nomain<Volume>(nullptr);
         grid->add_user();
         BKE_volume_grid_add(volume, grid.get());
@@ -437,30 +430,13 @@ const bke::GeometrySet *ViewerNodeLog::main_geometry() const
         return;
       }
 #endif
-      if (item.value.is_single() && item.value.get_single_ptr().is_type<bke::GeometrySet>()) {
-        main_geometry_cache_ = *item.value.get_single_ptr().get<bke::GeometrySet>();
+      if (item.value.is_single() && item.value.get().is_type<bke::GeometrySet>()) {
+        main_geometry_cache_ = *item.value.get().get<bke::GeometrySet>();
         return;
       }
     }
   });
   return main_geometry_cache_ ? &*main_geometry_cache_ : nullptr;
-}
-
-static bool warning_is_propagated(const NodeWarningPropagation propagation,
-                                  const NodeWarningType warning_type)
-{
-  switch (propagation) {
-    case NODE_WARNING_PROPAGATION_ALL:
-      return true;
-    case NODE_WARNING_PROPAGATION_NONE:
-      return false;
-    case NODE_WARNING_PROPAGATION_ONLY_ERRORS:
-      return warning_type == NodeWarningType::Error;
-    case NODE_WARNING_PROPAGATION_ONLY_ERRORS_AND_WARNINGS:
-      return ELEM(warning_type, NodeWarningType::Error, NodeWarningType::Warning);
-  }
-  BLI_assert_unreachable();
-  return true;
 }
 
 void NodeTreeLog::ensure_node_warnings(const NodesModifierData &nmd)
@@ -929,9 +905,15 @@ NodeTreeLogger &NodesEvalLog::get_local_tree_logger(const ComputeContext &comput
     const std::optional<nodes::ClosureSourceLocation> &location =
         context->closure_source_location();
     if (location.has_value()) {
-      tree_logger.tree_orig_session_uid =
-          location->tree->runtime->self_geometry_nodes_lazy_function_graph_info
-              ->original_tree_session_uid;
+      if (location->tree->runtime->self_geometry_nodes_lazy_function_graph_info) {
+        tree_logger.tree_orig_session_uid =
+            location->tree->runtime->self_geometry_nodes_lazy_function_graph_info
+                ->original_tree_session_uid;
+      }
+      else {
+        tree_logger.tree_orig_session_uid = get_original_session_uid(
+            id_cast<const ID *>(location->tree));
+      }
     }
   }
   else if (const auto *context = dynamic_cast<const bke::GeometryNodesModifierComputeContext *>(
@@ -941,6 +923,12 @@ NodeTreeLogger &NodesEvalLog::get_local_tree_logger(const ComputeContext &comput
       tree_logger.tree_orig_session_uid = get_original_session_uid(
           reinterpret_cast<const ID *>(nmd->node_group));
     }
+  }
+  else if (const auto *context = dynamic_cast<const bke::SceneCompositorEffectComputeContext *>(
+               &compute_context))
+  {
+    tree_logger.tree_orig_session_uid = get_original_session_uid(
+        reinterpret_cast<const ID *>(context->effect().node_group));
   }
   else if (const auto *context = dynamic_cast<const bke::OperatorComputeContext *>(
                &compute_context))
@@ -1048,31 +1036,46 @@ static NodesEvalLog *get_compositor_root_log(const SpaceNode &space_node)
   return nullptr;
 }
 
-static NodesEvalLog *get_root_log(const SpaceNode &snode)
+/* Stores a nodes evaluation log as well as the node editor it corresponds to. */
+struct LogWithNodeEditor {
+  NodesEvalLog *log;
+  const SpaceNode *space_node;
+};
+
+static LogWithNodeEditor get_root_log(const bContext &C)
 {
-  if (ED_node_is_geometry(&snode)) {
-    return get_geometry_nodes_root_log(snode);
+  const SpaceNode *snode = CTX_wm_space_node(&C);
+  if (snode && ED_node_is_geometry(snode)) {
+    return {get_geometry_nodes_root_log(*snode), snode};
   }
 
-  if (ED_node_is_compositor(&snode)) {
-    return get_compositor_root_log(snode);
+  if (snode && ED_node_is_compositor(snode)) {
+    return {get_compositor_root_log(*snode), snode};
   }
 
-  return nullptr;
+  ScrArea *area = CTX_wm_area(&C);
+  if (bke::compositor::is_compositor_viewer_visible(*area)) {
+    const Scene *scene = CTX_data_scene(&C);
+    const SpaceNode *space_node = bke::compositor::get_active_compositor_node_editor(C);
+    return {scene->runtime->compositor.nodes_evaluation_log.get(), space_node};
+  }
+
+  return {nullptr, nullptr};
 }
 
-ContextualNodeTreeLogs NodesEvalLog::get_contextual_tree_logs(const SpaceNode &snode)
+ContextualNodeTreeLogs NodesEvalLog::get_contextual_tree_logs(const bContext &C)
 {
-  NodesEvalLog *log = get_root_log(snode);
-  if (!log) {
+  const LogWithNodeEditor log_with_node_editor = get_root_log(C);
+  if (!log_with_node_editor.log || !log_with_node_editor.space_node) {
     return {};
   }
   bke::ComputeContextCache compute_context_cache;
   const Map<const bNodeTreeZone *, ComputeContextHash> hash_by_zone =
-      NodesEvalLog::get_context_hash_by_zone_for_node_editor(snode, compute_context_cache);
+      NodesEvalLog::get_context_hash_by_zone_for_node_editor(*log_with_node_editor.space_node,
+                                                             compute_context_cache);
   Map<const bke::bNodeTreeZone *, NodeTreeLog *> tree_logs_by_zone;
   for (const auto item : hash_by_zone.items()) {
-    NodeTreeLog &tree_log = log->get_tree_log(item.value);
+    NodeTreeLog &tree_log = log_with_node_editor.log->get_tree_log(item.value);
     tree_logs_by_zone.add(item.key, &tree_log);
   }
   return {tree_logs_by_zone};

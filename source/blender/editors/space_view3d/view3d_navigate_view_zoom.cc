@@ -12,8 +12,10 @@
 #include "BLI_rect.hh"
 #include "BLI_time.hh"
 
+#include "BKE_camera.h"
 #include "BKE_context.hh"
 #include "BKE_screen.hh"
+#include "BKE_view3d_runtime.hh"
 
 #include "WM_api.hh"
 
@@ -84,38 +86,43 @@ static void view_zoom_to_window_xy_camera(Scene *scene,
     float2 delta_px;
 
     /* Calculate the center of zoom with roll applied. */
-    if (rv3d->camroll != 0.0f) {
+    if (rv3d->camroll != 0.0f || (rv3d->rflag & RV3D_FLIP_X) != 0) {
       const float2 center(region->winx / 2, region->winy / 2);
 
-      const float2 pt_src_rotated = rotate_around_point_2d(
+      float2 pt_src_rotated = rotate_around_point_2d(
           pt_src, center, math::AngleRadian(-rv3d->camroll));
 
       const float2x2 rot_invert = math::from_rotation<float2x2>(math::AngleRadian(-rv3d->camroll));
 
-      ED_view3d_calc_camera_border(
-          scene, depsgraph, region, v3d, rv3d, false, true, &camera_frame_old);
+      camera_frame_old = BKE_camera_view_border(
+          scene, depsgraph, v3d, rv3d, region->winx, region->winy, false, false, true);
 
       rv3d->camzoom = camzoom_new;
       CLAMP(rv3d->camzoom, RV3D_CAMZOOM_MIN, RV3D_CAMZOOM_MAX);
 
-      ED_view3d_calc_camera_border(
-          scene, depsgraph, region, v3d, rv3d, false, true, &camera_frame_new);
+      camera_frame_new = BKE_camera_view_border(
+          scene, depsgraph, v3d, rv3d, region->winx, region->winy, false, false, true);
 
       BLI_rctf_transform_pt_v(&camera_frame_new, &camera_frame_old, pt_dst, pt_src_rotated);
       pt_dst = rotate_around_point_2d(pt_dst, center, math::AngleRadian(rv3d->camroll));
 
       delta_px = pt_dst - pt_src;
+
+      if ((rv3d->rflag & RV3D_FLIP_X) != 0) {
+        delta_px.x = -delta_px.x;
+      }
+
       delta_px = rot_invert * delta_px;
     }
     else {
-      ED_view3d_calc_camera_border(
-          scene, depsgraph, region, v3d, rv3d, false, true, &camera_frame_old);
+      camera_frame_old = BKE_camera_view_border(
+          scene, depsgraph, v3d, rv3d, region->winx, region->winy, false, false, true);
 
       rv3d->camzoom = camzoom_new;
       CLAMP(rv3d->camzoom, RV3D_CAMZOOM_MIN, RV3D_CAMZOOM_MAX);
 
-      ED_view3d_calc_camera_border(
-          scene, depsgraph, region, v3d, rv3d, false, true, &camera_frame_new);
+      camera_frame_new = BKE_camera_view_border(
+          scene, depsgraph, v3d, rv3d, region->winx, region->winy, false, false, true);
 
       BLI_rctf_transform_pt_v(&camera_frame_new, &camera_frame_old, pt_dst, pt_src);
 
@@ -346,7 +353,7 @@ static void viewzoom_apply_3d(ViewOpsData *vod,
   /* these limits were in old code too */
   CLAMP(vod->rv3d->dist, dist_range.min, dist_range.max);
 
-  if (RV3D_LOCK_FLAGS(vod->rv3d) & RV3D_BOXVIEW) {
+  if (bke::region_view3d_lock_flags_get(vod->rv3d) & RV3D_BOXVIEW) {
     view3d_boxview_sync(vod->area, vod->region);
   }
 
@@ -417,7 +424,7 @@ static void view_zoom_apply_step(bContext *C,
                                  const int delta,
                                  const int zoom_xy[2])
 {
-  View3D *v3d = static_cast<View3D *>(area->spacedata.first);
+  View3D *v3d = area->spacedata.first_as<View3D>();
   RegionView3D *rv3d = static_cast<RegionView3D *>(region->regiondata);
   bool use_cam_zoom;
 
@@ -449,7 +456,7 @@ static void view_zoom_apply_step(bContext *C,
     }
   }
 
-  if (RV3D_LOCK_FLAGS(rv3d) & RV3D_BOXVIEW) {
+  if (bke::region_view3d_lock_flags_get(rv3d) & RV3D_BOXVIEW) {
     view3d_boxview_sync(area, region);
   }
 
@@ -467,7 +474,7 @@ static wmOperatorStatus viewzoom_exec(bContext *C, wmOperator *op)
   Scene *scene = CTX_data_scene(C);
   ScrArea *area = CTX_wm_area(C);
   ARegion *region = CTX_wm_region(C);
-  View3D *v3d = static_cast<View3D *>(area->spacedata.first);
+  View3D *v3d = area->spacedata.first_as<View3D>();
   RegionView3D *rv3d = static_cast<RegionView3D *>(region->regiondata);
 
   const int delta = RNA_int_get(op->ptr, "delta");

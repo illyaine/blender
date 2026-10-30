@@ -100,9 +100,8 @@ static void node_declare(NodeDeclarationBuilder &b)
       .custom_draw(socket_items::ui::draw_extend_socket_fn<FileOutputItemsAccessor>());
 }
 
-static void node_init(const bContext *C, PointerRNA *node_pointer)
+static void node_init(bNodeTree *node_tree, bNode *node)
 {
-  bNode *node = node_pointer->data_as<bNode>();
   NodeCompositorFileOutput *data = MEM_new<NodeCompositorFileOutput>(__func__);
   node->storage = data;
   data->save_as_render = true;
@@ -110,15 +109,17 @@ static void node_init(const bContext *C, PointerRNA *node_pointer)
   data->file_name = BLI_strdup("{blend_name}");
 
   BKE_image_format_init(&data->format);
-  BKE_image_format_media_type_set(
-      &data->format, node_pointer->owner_id, MEDIA_TYPE_MULTI_LAYER_IMAGE);
+  BKE_image_format_media_type_set(&data->format, &node_tree->id, MEDIA_TYPE_MULTI_LAYER_IMAGE);
   BKE_image_format_update_color_space_for_type(&data->format);
+}
 
+static void node_init_api(const bContext *C, PointerRNA *node_ptr)
+{
+  bNode *node = node_ptr->data_as<bNode>();
+  NodeCompositorFileOutput &data = node_storage(*node);
   Scene *scene = CTX_data_scene(C);
-  if (scene) {
-    const RenderData *render_data = &scene->r;
-    STRNCPY(data->directory, render_data->pic);
-  }
+  const RenderData *render_data = &scene->r;
+  STRNCPY(data.directory, render_data->pic);
 }
 
 static void node_free_storage(bNode *node)
@@ -173,7 +174,7 @@ static Vector<bke::path_templates::Error> compute_image_path(const StringRefNull
   char base_path[FILE_MAX] = "";
   STRNCPY(base_path, directory.c_str());
   const std::string full_file_name = file_name + file_name_suffix;
-  BLI_path_append(base_path, FILE_MAX, full_file_name.c_str());
+  BLI_path_append(base_path, full_file_name.c_str());
 
   bke::path_templates::VariableMap template_variables;
   BKE_blender_project_read_callback(&bmain, [&](const bke::BlenderProject *project) {
@@ -185,7 +186,7 @@ static Vector<bke::path_templates::Error> compute_image_path(const StringRefNull
   /* Substitute #### frame variables if not doing an animation render. For animation renders, this
    * is handled internally by the following function. */
   if (!is_animation_render) {
-    BLI_path_frame(base_path, FILE_MAX, frame_number, 0);
+    BLI_path_frame(base_path, frame_number, 0);
   }
 
   return BKE_image_path_from_imformat(r_image_path,
@@ -593,7 +594,7 @@ class FileOutputOperation : public NodeOperation {
     if (result.is_single_value()) {
       /* For single values, we fill a buffer that covers the domain of the operation with the value
        * of the result. */
-      data.allocate_texture(this->compute_domain(), true, ResultStorageType::CPU);
+      data.allocate_texture(this->compute_domain(), true, ResultStorageType::CPUImage);
       const GPointer single_value = result.single_value();
       const int64_t pixel_count = int64_t(data.domain().data_size.x) * data.domain().data_size.y;
       single_value.type()->fill_assign_n(
@@ -647,6 +648,8 @@ class FileOutputOperation : public NodeOperation {
       case ResultType::Scene:
       case ResultType::Text:
       case ResultType::Mask:
+      case ResultType::Bundle:
+      case ResultType::Closure:
         /* Not supported. */
         BLI_assert_unreachable();
         break;
@@ -697,6 +700,8 @@ class FileOutputOperation : public NodeOperation {
       case ResultType::Scene:
       case ResultType::Text:
       case ResultType::Mask:
+      case ResultType::Bundle:
+      case ResultType::Closure:
         /* Not supported. */
         BLI_assert_unreachable();
         break;
@@ -817,6 +822,11 @@ class FileOutputOperation : public NodeOperation {
     }
     return this->context().render_context()->is_animation_render;
   }
+
+  bool uses_asynchronous_execution() const override
+  {
+    return false;
+  }
 };
 
 static NodeOperation *get_compositor_operation(Context &context, const bNode &node)
@@ -838,7 +848,8 @@ static void node_register()
   ntype.draw_buttons_ex = node_draw_buttons_extended;
   ntype.insert_link = node_insert_link;
   ntype.register_operators = node_register_operators;
-  ntype.initfunc_api = node_init;
+  ntype.initfunc = node_init;
+  ntype.initfunc_api = node_init_api;
   bke::node_type_storage(ntype, "NodeCompositorFileOutput", node_free_storage, node_copy_storage);
   ntype.blend_write_storage_content = node_blend_write;
   ntype.blend_data_read_storage_content = node_blend_read;

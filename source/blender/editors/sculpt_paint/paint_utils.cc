@@ -8,10 +8,9 @@
 
 #include <cmath>
 
+#include "DNA_brush_types.h"
 #include "DNA_mesh_types.h"
 #include "DNA_object_types.h"
-
-#include "DNA_brush_types.h"
 #include "DNA_scene_types.h"
 
 #include "BLI_listbase.hh"
@@ -26,11 +25,16 @@
 #include "BKE_bvhutils.hh"
 #include "BKE_colortools.hh"
 #include "BKE_context.hh"
+#include "BKE_curves.hh"
 #include "BKE_layer.hh"
 #include "BKE_mesh.hh"
 #include "BKE_mesh_sample.hh"
+#include "BKE_object.hh"
 #include "BKE_paint.hh"
+#include "BKE_paint_types.hh"
 #include "BKE_report.hh"
+#include "DNA_curves_types.h"
+#include "DNA_grease_pencil_types.h"
 
 #include "RNA_access.hh"
 #include "RNA_define.hh"
@@ -38,11 +42,10 @@
 
 #include "RE_texture.h"
 
+#include "ED_mesh.hh" /* for face mask functions */
 #include "ED_screen.hh"
 #include "ED_select_utils.hh"
 #include "ED_view3d.hh"
-
-#include "ED_mesh.hh" /* for face mask functions */
 
 #include "WM_api.hh"
 #include "WM_types.hh"
@@ -51,47 +54,65 @@
 
 namespace blender {
 
-bool paint_convert_bb_to_rect(rcti *rect,
-                              const float bb_min[3],
-                              const float bb_max[3],
-                              const ARegion &region,
-                              const RegionView3D &rv3d,
-                              const Object &ob)
+static float3 paint_init_pivot_mesh(Object *ob)
 {
-  int i, j, k;
-
-  BLI_rcti_init_minmax(rect);
-
-  /* return zero if the bounding box has non-positive volume */
-  if (bb_min[0] > bb_max[0] || bb_min[1] > bb_max[1] || bb_min[2] > bb_max[2]) {
-    return false;
+  const Mesh *mesh_eval = BKE_object_get_evaluated_mesh(ob);
+  if (!mesh_eval) {
+    mesh_eval = id_cast<const Mesh *>(ob->data);
   }
 
-  const float4x4 projection = ED_view3d_ob_project_mat_get(&rv3d, &ob);
-
-  for (i = 0; i < 2; i++) {
-    for (j = 0; j < 2; j++) {
-      for (k = 0; k < 2; k++) {
-        float vec[3];
-        int proj_i[2];
-        vec[0] = i ? bb_min[0] : bb_max[0];
-        vec[1] = j ? bb_min[1] : bb_max[1];
-        vec[2] = k ? bb_min[2] : bb_max[2];
-        /* convert corner to screen space */
-        const float2 proj = ED_view3d_project_float_v2_m4(&region, vec, projection);
-        /* expand 2D rectangle */
-
-        /* we could project directly to int? */
-        proj_i[0] = proj[0];
-        proj_i[1] = proj[1];
-
-        BLI_rcti_do_minmax_v(rect, proj_i);
-      }
-    }
+  const std::optional<Bounds<float3>> bounds = mesh_eval->bounds_min_max();
+  if (!bounds) {
+    return float3(0.0f);
   }
 
-  /* return false if the rectangle has non-positive area */
-  return rect->xmin < rect->xmax && rect->ymin < rect->ymax;
+  return math::midpoint(bounds->min, bounds->max);
+}
+
+static float3 paint_init_pivot_curves(Object *ob)
+{
+  const Curves &curves = *id_cast<const Curves *>(ob->data);
+  const std::optional<Bounds<float3>> bounds = curves.geometry.wrap().bounds_min_max();
+  if (bounds.has_value()) {
+    return math::midpoint(bounds->min, bounds->max);
+  }
+  return float3(0);
+}
+
+static float3 paint_init_pivot_grease_pencil(Object *ob, const int frame)
+{
+  const GreasePencil &grease_pencil = *id_cast<const GreasePencil *>(ob->data);
+  const std::optional<Bounds<float3>> bounds = grease_pencil.bounds_min_max(frame);
+  if (bounds.has_value()) {
+    return math::midpoint(bounds->min, bounds->max);
+  }
+  return float3(0.0f);
+}
+
+void paint_init_pivot(Object *ob, Scene *scene, Paint *paint)
+{
+  bke::PaintRuntime &paint_runtime = *paint->runtime;
+
+  float3 location;
+  switch (ob->type) {
+    case OB_MESH:
+      location = paint_init_pivot_mesh(ob);
+      break;
+    case OB_CURVES:
+      location = paint_init_pivot_curves(ob);
+      break;
+    case OB_GREASE_PENCIL:
+      location = paint_init_pivot_grease_pencil(ob, scene->r.cfra);
+      break;
+    default:
+      BLI_assert_unreachable();
+      paint_runtime.last_stroke_valid = false;
+      return;
+  }
+
+  mul_m4_v3(ob->object_to_world().ptr(), location);
+
+  bke::paint::stroke_set_location(*paint, location);
 }
 
 float paint_calc_object_space_radius(const ViewContext &vc,
@@ -203,7 +224,8 @@ void paint_stroke_operator_properties(wmOperatorType *ot)
 /* face-select ops */
 static wmOperatorStatus paint_select_linked_exec(bContext *C, wmOperator * /*op*/)
 {
-  paintface_select_linked(C, CTX_data_active_object(C), nullptr, true);
+  paintface_select_linked(
+      C, *CTX_data_ensure_evaluated_depsgraph(C), CTX_data_active_object(C), nullptr, true);
   ED_region_tag_redraw(CTX_wm_region(C));
   return OPERATOR_FINISHED;
 }
@@ -226,7 +248,8 @@ static wmOperatorStatus paint_select_linked_pick_invoke(bContext *C,
 {
   const bool select = !RNA_boolean_get(op->ptr, "deselect");
   view3d_operator_needs_gpu(C);
-  paintface_select_linked(C, CTX_data_active_object(C), event->mval, select);
+  paintface_select_linked(
+      C, *CTX_data_ensure_evaluated_depsgraph(C), CTX_data_active_object(C), event->mval, select);
   ED_region_tag_redraw(CTX_wm_region(C));
   return OPERATOR_FINISHED;
 }
@@ -248,7 +271,9 @@ void PAINT_OT_face_select_linked_pick(wmOperatorType *ot)
 static wmOperatorStatus face_select_all_exec(bContext *C, wmOperator *op)
 {
   Object *ob = CTX_data_active_object(C);
-  if (paintface_deselect_all_visible(C, ob, RNA_enum_get(op->ptr, "action"), true)) {
+  if (paintface_deselect_all_visible(
+          *CTX_data_ensure_evaluated_depsgraph(C), ob, RNA_enum_get(op->ptr, "action"), true))
+  {
     ED_region_tag_redraw(CTX_wm_region(C));
     return OPERATOR_FINISHED;
   }
@@ -279,7 +304,7 @@ static wmOperatorStatus paint_select_more_exec(bContext *C, wmOperator *op)
 
   const bool face_step = RNA_boolean_get(op->ptr, "face_step");
   paintface_select_more(mesh, face_step);
-  paintface_flush_flags(C, ob, true, false);
+  paintface_flush_flags(*CTX_data_ensure_evaluated_depsgraph(C), ob, true, false);
 
   ED_region_tag_redraw(CTX_wm_region(C));
   return OPERATOR_FINISHED;
@@ -310,7 +335,7 @@ static wmOperatorStatus paint_select_less_exec(bContext *C, wmOperator *op)
 
   const bool face_step = RNA_boolean_get(op->ptr, "face_step");
   paintface_select_less(mesh, face_step);
-  paintface_flush_flags(C, ob, true, false);
+  paintface_flush_flags(*CTX_data_ensure_evaluated_depsgraph(C), ob, true, false);
 
   ED_region_tag_redraw(CTX_wm_region(C));
   return OPERATOR_FINISHED;
@@ -337,11 +362,12 @@ static wmOperatorStatus paintface_select_loop_invoke(bContext *C,
 {
   const bool select = RNA_boolean_get(op->ptr, "select");
   const bool extend = RNA_boolean_get(op->ptr, "extend");
+  Depsgraph &depsgraph = *CTX_data_ensure_evaluated_depsgraph(C);
   if (!extend) {
-    paintface_deselect_all_visible(C, CTX_data_active_object(C), SEL_DESELECT, false);
+    paintface_deselect_all_visible(depsgraph, CTX_data_active_object(C), SEL_DESELECT, false);
   }
   view3d_operator_needs_gpu(C);
-  paintface_select_loop(C, CTX_data_active_object(C), event->mval, select);
+  paintface_select_loop(C, depsgraph, CTX_data_active_object(C), event->mval, select);
   ED_region_tag_redraw(CTX_wm_region(C));
   return OPERATOR_FINISHED;
 }
@@ -395,7 +421,7 @@ static wmOperatorStatus vert_select_all_exec(bContext *C, wmOperator *op)
 {
   Object *ob = CTX_data_active_object(C);
   paintvert_deselect_all_visible(ob, RNA_enum_get(op->ptr, "action"), true);
-  paintvert_tag_select_update(C, ob);
+  paintvert_tag_select_update(ob);
   ED_region_tag_redraw(CTX_wm_region(C));
   return OPERATOR_FINISHED;
 }
@@ -425,7 +451,7 @@ static wmOperatorStatus vert_select_ungrouped_exec(bContext *C, wmOperator *op)
   }
 
   paintvert_select_ungrouped(ob, RNA_boolean_get(op->ptr, "extend"), true);
-  paintvert_tag_select_update(C, ob);
+  paintvert_tag_select_update(ob);
   ED_region_tag_redraw(CTX_wm_region(C));
   return OPERATOR_FINISHED;
 }
@@ -449,7 +475,7 @@ void PAINT_OT_vert_select_ungrouped(wmOperatorType *ot)
 
 static wmOperatorStatus paintvert_select_linked_exec(bContext *C, wmOperator * /*op*/)
 {
-  paintvert_select_linked(C, CTX_data_active_object(C));
+  paintvert_select_linked(CTX_data_active_object(C));
   ED_region_tag_redraw(CTX_wm_region(C));
   return OPERATOR_FINISHED;
 }
@@ -508,7 +534,7 @@ static wmOperatorStatus paintvert_select_more_exec(bContext *C, wmOperator *op)
   paintvert_select_more(mesh, face_step);
 
   paintvert_flush_flags(ob);
-  paintvert_tag_select_update(C, ob);
+  paintvert_tag_select_update(ob);
   ED_region_tag_redraw(CTX_wm_region(C));
 
   return OPERATOR_FINISHED;
@@ -541,7 +567,7 @@ static wmOperatorStatus paintvert_select_less_exec(bContext *C, wmOperator *op)
   paintvert_select_less(mesh, face_step);
 
   paintvert_flush_flags(ob);
-  paintvert_tag_select_update(C, ob);
+  paintvert_tag_select_update(ob);
   ED_region_tag_redraw(CTX_wm_region(C));
 
   return OPERATOR_FINISHED;
@@ -566,7 +592,7 @@ static wmOperatorStatus face_select_hide_exec(bContext *C, wmOperator *op)
 {
   const bool unselected = RNA_boolean_get(op->ptr, "unselected");
   Object *ob = CTX_data_active_object(C);
-  paintface_hide(C, ob, unselected);
+  paintface_hide(*CTX_data_ensure_evaluated_depsgraph(C), ob, unselected);
   ED_region_tag_redraw(CTX_wm_region(C));
   return OPERATOR_FINISHED;
 }
@@ -590,7 +616,7 @@ static wmOperatorStatus vert_select_hide_exec(bContext *C, wmOperator *op)
 {
   const bool unselected = RNA_boolean_get(op->ptr, "unselected");
   Object *ob = CTX_data_active_object(C);
-  paintvert_hide(C, ob, unselected);
+  paintvert_hide(ob, unselected);
   ED_region_tag_redraw(CTX_wm_region(C));
   return OPERATOR_FINISHED;
 }
@@ -619,10 +645,10 @@ static wmOperatorStatus face_vert_reveal_exec(bContext *C, wmOperator *op)
   Object *ob = CTX_data_active_object(C);
 
   if (BKE_paint_select_vert_test(ob)) {
-    paintvert_reveal(C, ob, select);
+    paintvert_reveal(ob, select);
   }
   else {
-    paintface_reveal(C, ob, select);
+    paintface_reveal(*CTX_data_ensure_evaluated_depsgraph(C), ob, select);
   }
 
   ED_region_tag_redraw(CTX_wm_region(C));

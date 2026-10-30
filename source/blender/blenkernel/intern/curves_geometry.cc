@@ -12,6 +12,7 @@
 
 #include "BLI_array_utils.hh"
 #include "BLI_bounds.hh"
+#include "BLI_bytes_type_common.hh"
 #include "BLI_index_mask.hh"
 #include "BLI_length_parameterize.hh"
 #include "BLI_listbase.hh"
@@ -190,7 +191,7 @@ CurvesGeometry::CurvesGeometry(CurvesGeometry &&other)
   other.vertex_group_active_index = 0;
 
   this->attributes_active_index = other.attributes_active_index;
-  other.attributes_active_index = 0;
+  other.attributes_active_index = -1;
 
   this->runtime = other.runtime;
   other.runtime = nullptr;
@@ -250,13 +251,12 @@ void CurvesGeometry::fill_curve_types(const CurveType type)
   }
   else {
     const GPointer value(CPPType::get<int8_t>(), &type);
-    Attribute::SingleData data = Attribute::SingleData::from_value(value);
+    GList data(*value.type(), GList::SingleData::ForValue(value), this->curves_num());
     if (Attribute *attr = this->attribute_storage.wrap().lookup("curve_type")) {
       attr->assign_data(std::move(data));
     }
     else {
-      this->attribute_storage.wrap().add(
-          "curve_type", AttrDomain::Curve, AttrType::Int8, std::move(data));
+      this->attribute_storage.wrap().add("curve_type", AttrDomain::Curve, std::move(data));
     }
   }
   this->runtime->type_counts.fill(0);
@@ -1276,15 +1276,6 @@ void CurvesGeometry::tag_material_index_changed()
   this->runtime->max_material_index_cache.tag_dirty();
 }
 
-static void translate_positions(MutableSpan<float3> positions, const float3 &translation)
-{
-  threading::parallel_for(positions.index_range(), 2048, [&](const IndexRange range) {
-    for (float3 &position : positions.slice(range)) {
-      position += translation;
-    }
-  });
-}
-
 void CurvesGeometry::calculate_bezier_auto_handles()
 {
   if (!this->has_curve_with_type(CURVE_TYPE_BEZIER)) {
@@ -1354,12 +1345,12 @@ void CurvesGeometry::translate(const float3 &translation)
     bounds = this->runtime->bounds_cache.data();
   }
 
-  translate_positions(this->positions_for_write(), translation);
+  math::translate_points(this->positions_for_write(), translation);
   if (this->handle_positions_left()) {
-    translate_positions(this->handle_positions_left_for_write(), translation);
+    math::translate_points(this->handle_positions_left_for_write(), translation);
   }
   if (this->handle_positions_right()) {
-    translate_positions(this->handle_positions_right_for_write(), translation);
+    math::translate_points(this->handle_positions_right_for_write(), translation);
   }
   this->tag_positions_changed();
 
@@ -1628,7 +1619,6 @@ CurvesGeometry curves_copy_curve_selection(const CurvesGeometry &curves,
     copy_curve_selection_custom_knots(curves, curves_to_copy, dst_curves);
   }
 
-  dst_curves.update_curve_types();
   dst_curves.remove_attributes_based_on_types();
 
   return dst_curves;
@@ -1719,8 +1709,8 @@ void CurvesGeometry::reverse_curves(const IndexMask &curves_to_reverse)
     }
 
     GSpanAttributeWriter attribute = attributes.lookup_for_write_span(iter.name);
-    attribute_math::to_static_type(attribute.span.type(), [&]<typename T>() {
-      reverse_curve_point_data<T>(*this, curves_to_reverse, attribute.span.typed<T>());
+    attribute_math::to_static_bytes_type(attribute.span.type(), [&]<typename T>() {
+      reverse_curve_point_data<T>(*this, curves_to_reverse, bytes_type::typed<T>(attribute.span));
     });
     attribute.finish();
     return;
@@ -1866,29 +1856,14 @@ static GVArray adapt_curve_domain_point_to_curve(const CurvesGeometry &curves,
  * However, doing that makes the implementation simpler, and this can be optimized in the future if
  * only some values are required.
  */
-template<typename T>
-static void adapt_curve_domain_curve_to_point_impl(const CurvesGeometry &curves,
-                                                   const VArray<T> &old_values,
-                                                   MutableSpan<T> r_values)
-{
-  PRF_scope(ProfileCategory::Default);
-  const OffsetIndices points_by_curve = curves.points_by_curve();
-  for (const int i_curve : IndexRange(curves.curves_num())) {
-    r_values.slice(points_by_curve[i_curve]).fill(old_values[i_curve]);
-  }
-}
-
 static GVArray adapt_curve_domain_curve_to_point(const CurvesGeometry &curves,
                                                  const GVArray &varray)
 {
   PRF_scope(ProfileCategory::Default);
-  GVArray new_varray;
-  attribute_math::to_static_type(varray.type(), [&]<typename T>() {
-    Array<T> values(curves.points_num());
-    adapt_curve_domain_curve_to_point_impl<T>(curves, varray.typed<T>(), values);
-    new_varray = VArray<T>::from_container(std::move(values));
-  });
-  return new_varray;
+  GArray<> values(varray.type(), curves.points_num());
+  array_utils::gather_to_groups(
+      curves.points_by_curve(), curves.curves_range(), GVArraySpan(varray), values);
+  return GVArray::from_garray(std::move(values));
 }
 
 GVArray CurvesGeometry::adapt_domain(const GVArray &varray,
@@ -1943,7 +1918,6 @@ void CurvesGeometry::blend_read(BlendDataReader &reader)
 
   CustomData_blend_read(&reader, &this->point_data, this->point_num);
   CustomData_blend_read(&reader, &this->curve_data_legacy, this->curve_num);
-  this->attribute_storage.wrap().blend_read(reader);
 
   if (this->curve_offsets) {
     this->runtime->curve_offsets_sharing_info = BLO_read_shared(
@@ -1955,6 +1929,9 @@ void CurvesGeometry::blend_read(BlendDataReader &reader)
                                        nullptr;
         });
   }
+
+  this->attribute_storage.wrap().blend_read(
+      reader, [&](const AttrDomain domain) { return this->attributes().domain_size(domain); });
 
   BLO_read_struct_list(&reader, bDeformGroup, &this->vertex_group_names);
 
@@ -1998,8 +1975,7 @@ void CurvesGeometry::blend_write_prepare(CurvesGeometry::BlendWriteData &write_d
     this->attribute_storage.dna_attributes_num = write_data.attribute_data.attributes.size();
   }
 
-  BLO_write_generated_pointer_tag(write_data.attribute_data.writer,
-                                  this->attribute_storage.dna_attributes);
+  write_data.attribute_data.writer->generated_pointer_tag(this->attribute_storage.dna_attributes);
 }
 
 void CurvesGeometry::blend_write(BlendWriter &writer,
@@ -2011,8 +1987,7 @@ void CurvesGeometry::blend_write(BlendWriter &writer,
   this->attribute_storage.wrap().blend_write(writer, write_data.attribute_data);
 
   if (this->curve_offsets) {
-    BLO_write_shared(
-        &writer,
+    writer.write_shared(
         this->curve_offsets,
         sizeof(int) * (this->curve_num + 1),
         this->runtime->curve_offsets_sharing_info,
@@ -2022,8 +1997,7 @@ void CurvesGeometry::blend_write(BlendWriter &writer,
   BKE_defbase_blend_write(&writer, &this->vertex_group_names);
 
   if (this->custom_knot_num) {
-    BLO_write_shared(
-        &writer,
+    writer.write_shared(
         this->custom_knots,
         sizeof(float) * this->custom_knot_num,
         this->runtime->custom_knots_sharing_info,
